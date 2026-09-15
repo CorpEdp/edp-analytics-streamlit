@@ -1,0 +1,26 @@
+# requirements.txt — STARTER FILE
+#
+# This is a reasonable guess based on common libraries used in ERP / payment /
+# reconciliation / reporting Streamlit apps (uploads, Excel, dates, charts, APIs).
+# It is NOT auto-generated from your real code yet.
+#
+# Once you paste your real 21 app.py files into modules/, generate the
+# accurate version by running, from the project root, in a clean venv:
+#
+#   pip install pipreqs
+#   pipreqs . --force
+#
+# That will scan every import statement across all 21 modules and produce
+# an exact, no-bloat requirements.txt. Then you can delete/replace this file.
+
+streamlit>=1.37
+pandas>=2.2
+numpy>=1.26
+openpyxl>=3.1          # reading/writing .xlsx
+xlsxwriter>=3.2         # writing formatted Excel reports
+python-dateutil>=2.9
+requests>=2.32          # for Cashfree / payment gateway API calls
+plotly>=5.22            # charts/analytics
+gspread>=6.1             # if any module reads/writes Google Sheets
+google-auth>=2.32        # needed alongside gspread
+Pillow>=10.4              # if any module handles images
