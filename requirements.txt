@@ -16,6 +16,7 @@
 streamlit>=1.37
 pandas>=2.2
 numpy>=1.26
+matplotlib>=3.8
 openpyxl>=3.1          # reading/writing .xlsx
 xlsxwriter>=3.2         # writing formatted Excel reports
 python-dateutil>=2.9

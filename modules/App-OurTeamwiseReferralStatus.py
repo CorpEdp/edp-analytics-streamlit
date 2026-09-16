@@ -1000,7 +1000,6 @@ def detect_date_format(df):
         return most_common[0][0]
     return "Unknown"
 
-@st.cache_data(show_spinner=False)
 def process_data(df):
     df = df.copy()
     df.columns = df.columns.astype(str).str.strip()
