@@ -180,10 +180,10 @@ MODE_REGISTRY = [
     {
         "id": "numbers_dublicate_removed",
         "name": "Numbers Dublicate Removed",
-        "description": "Legacy Streamlit mode converted from Custom-NumbersDublicateRemoved.py",
+        "description": "Legacy Streamlit mode converted from NumbersDublicateRemoved.py",
         "category": "Custom",
         "module": "modes.numbers_dublicate_removed",
-        "source": "modules/Custom-NumbersDublicateRemoved.py",
+        "source": "modules/NumbersDublicateRemoved.py",
     },
 ]
 
