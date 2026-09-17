@@ -84,14 +84,17 @@ st.sidebar.caption("Unified reporting workspace")
 mode_registry = get_mode_registry()
 search = st.sidebar.text_input("Search modes", placeholder="Search reports and tools")
 
-filtered_modes = [
-    mode
-    for mode in mode_registry
-    if not search.strip()
-    or search.casefold() in mode["name"].casefold()
-    or search.casefold() in mode["description"].casefold()
-    or search.casefold() in mode["category"].casefold()
-]
+filtered_modes = sorted(
+    [
+        mode
+        for mode in mode_registry
+        if not search.strip()
+        or search.casefold() in mode["name"].casefold()
+        or search.casefold() in mode["description"].casefold()
+        or search.casefold() in mode["category"].casefold()
+    ],
+    key=lambda mode: f"{mode['category']} / {mode['name']}".casefold(),
+)
 
 if not filtered_modes:
     st.sidebar.warning("No matching modes found.")
