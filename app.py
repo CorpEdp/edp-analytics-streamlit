@@ -93,7 +93,10 @@ filtered_modes = sorted(
         or search.casefold() in mode["description"].casefold()
         or search.casefold() in mode["category"].casefold()
     ],
-    key=lambda mode: f"{mode['category']} / {mode['name']}".casefold(),
+    key=lambda mode: (
+        mode["id"] != "home",
+        f"{mode['category']} / {mode['name']}".casefold(),
+    ),
 )
 
 if not filtered_modes:
