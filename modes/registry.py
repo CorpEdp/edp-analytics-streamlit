@@ -185,6 +185,14 @@ MODE_REGISTRY = [
         "module": "modes.numbers_dublicate_removed",
         "source": "modules/Custom-NumbersDublicateRemoved.py",
     },
+        {
+        "id": "numbers_dublicate_removed",
+        "name": "Numbers Dublicate Removed",
+        "description": "Legacy Streamlit mode converted from Custom-NumbersDublicateRemoved.py",
+        "category": "Custom",
+        "module": "modes.numbers_dublicate_removed",
+        "source": "modules/Custom-NumbersDublicateRemoved.py",
+    },
 ]
 
 
