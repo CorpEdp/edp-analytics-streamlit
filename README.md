@@ -66,6 +66,18 @@ pip install -r requirements.txt
 streamlit run main.py
 ```
 
+## Adding a mode to the active app
+
+The active entry point is `app.py`. To add a mode, paste a valid Python module
+with either a `render()` or `run()` function into `modes/`, using a Python-safe
+filename such as `customer_summary.py`. The sidebar discovers new files on the
+next Streamlit rerun; no edit to `app.py` or `modes/registry.py` is required.
+
+For a deployed Streamlit link, the new file must also reach the deployment
+environment. With Streamlit Community Cloud, commit and push the file to the
+connected repository; the deployment then reruns automatically. Pasting a
+file only on your local computer cannot change a remote deployment.
+
 ## Once all 21 modules have real code: regenerate requirements.txt
 
 The current `requirements.txt` is a reasonable starting guess. Replace it

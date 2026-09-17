@@ -1,9 +1,11 @@
 import importlib
+from pathlib import Path
 
 import streamlit as st
 
 from core.error_handler import show_mode_error
-from modes.registry import MODE_REGISTRY
+from core.loader import execute_legacy_script
+from modes.registry import get_mode_registry
 
 st.set_page_config(
     page_title="EDP Analytics",
@@ -79,11 +81,12 @@ st.markdown(
 st.sidebar.title("EDP Analytics")
 st.sidebar.caption("Unified reporting workspace")
 
+mode_registry = get_mode_registry()
 search = st.sidebar.text_input("Search modes", placeholder="Search reports and tools")
 
 filtered_modes = [
     mode
-    for mode in MODE_REGISTRY
+    for mode in mode_registry
     if not search.strip()
     or search.casefold() in mode["name"].casefold()
     or search.casefold() in mode["description"].casefold()
@@ -101,8 +104,8 @@ selected_mode = filtered_modes[labels.index(selected_label)]
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"**Mode:** {selected_mode['name']}")
 st.sidebar.caption(selected_mode["description"])
-st.sidebar.caption(f"Categories: {len({m['category'] for m in MODE_REGISTRY})}")
-st.sidebar.caption(f"Modes available: {len(MODE_REGISTRY)}")
+st.sidebar.caption(f"Categories: {len({m['category'] for m in mode_registry})}")
+st.sidebar.caption(f"Modes available: {len(mode_registry)}")
 
 main_title = "EDP Analytics"
 subtitle = "Select a report or tool from the sidebar to begin."
@@ -133,7 +136,7 @@ if selected_mode["id"] == "home":
     )
 
     cols = st.columns(3)
-    for col, metric in zip(cols, [("Modes", str(len(MODE_REGISTRY))), ("Categories", str(len({m['category'] for m in MODE_REGISTRY}))), ("Status", "Ready")]):
+    for col, metric in zip(cols, [("Modes", str(len(mode_registry))), ("Categories", str(len({m['category'] for m in mode_registry}))), ("Status", "Ready")]):
         with col:
             st.markdown(
                 f"""
@@ -146,20 +149,33 @@ if selected_mode["id"] == "home":
             )
 
     st.info("Data files are loaded only after you select a mode.")
+else:
+    st.markdown(
+        f"""
+        <div class="mode-hero">
+            <div class="mode-badge">{selected_mode['category']}</div>
+            <h3 style="margin: 0.7rem 0 0.3rem 0; color: #0f172a;">Selected mode</h3>
+            <p style="margin: 0; color: #475569;">{selected_mode['name']}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-st.markdown(
-    f"""
-    <div class="mode-hero">
-        <div class="mode-badge">{selected_mode['category']}</div>
-        <h3 style="margin: 0.7rem 0 0.3rem 0; color: #0f172a;">Selected mode</h3>
-        <p style="margin: 0; color: #475569;">{selected_mode['name']}</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-try:
-    selected_module = importlib.import_module(selected_mode["module"])
-    selected_module.render()
-except Exception as error:  # Keep one broken report from taking down the shell.
-    show_mode_error(selected_mode, error)
+    try:
+        if selected_mode.get("mode_type") == "script":
+            source_path = Path(__file__).resolve().parent / selected_mode["source"]
+            execute_legacy_script(source_path)
+        else:
+            selected_module = importlib.import_module(selected_mode["module"])
+            render_mode = getattr(selected_module, "render", None)
+            run_mode = getattr(selected_module, "run", None)
+            if callable(render_mode):
+                render_mode()
+            elif callable(run_mode):
+                run_mode()
+            else:
+                raise AttributeError(
+                    f"{selected_mode['module']} must define render() or run()"
+                )
+    except Exception as error:  # Keep one broken report from taking down the shell.
+        show_mode_error(selected_mode, error)

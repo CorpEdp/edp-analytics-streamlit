@@ -1,4 +1,12 @@
-"""Auto-generated registry for the unified Streamlit app."""
+"""Mode metadata plus runtime discovery for the unified Streamlit app."""
+
+from __future__ import annotations
+
+import ast
+import importlib
+import pkgutil
+import re
+from pathlib import Path
 
 MODE_REGISTRY = [
     {
@@ -178,3 +186,54 @@ MODE_REGISTRY = [
         "source": "modules/NumbersDublicateRemoved.py",
     },
 ]
+
+
+def _display_name(module_name: str) -> str:
+    return re.sub(r"\s+", " ", module_name.replace("_", " ")).strip().title()
+
+
+def _mode_type(path: Path) -> str:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError:
+        return "script"
+
+    has_entrypoint = any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in {"render", "run"}
+        for node in tree.body
+    )
+    return "callable" if has_entrypoint else "script"
+
+
+def get_mode_registry() -> list[dict[str, str]]:
+    """Return saved metadata plus every valid mode file currently on disk."""
+    importlib.invalidate_caches()
+
+    modes_by_module = {mode["module"]: mode.copy() for mode in MODE_REGISTRY}
+    import modes
+
+    for _, module_name, is_package in pkgutil.iter_modules(modes.__path__):
+        if (
+            is_package
+            or module_name in {"registry", "home"}
+            or not module_name.isidentifier()
+        ):
+            continue
+
+        qualified_name = f"modes.{module_name}"
+        if qualified_name in modes_by_module:
+            continue
+
+        source_path = Path(modes.__file__).parent / f"{module_name}.py"
+        modes_by_module[qualified_name] = {
+            "id": module_name,
+            "name": _display_name(module_name),
+            "description": "Automatically discovered Streamlit mode",
+            "category": "Custom",
+            "module": qualified_name,
+            "source": f"modes/{module_name}.py",
+            "mode_type": _mode_type(source_path),
+        }
+
+    return list(modes_by_module.values())
