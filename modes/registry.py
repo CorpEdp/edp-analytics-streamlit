@@ -188,10 +188,10 @@ MODE_REGISTRY = [
         {
         "id": "scheme_joining_cashfree_payment_details_reconciliation",
         "name": "SchemeJoiningCashfreePaymentDetailsReconciliation",
-        "description": "Legacy Streamlit mode converted from Custom-SchemeJoiningCashfreePaymentDetailsReconciliation.py",
+        "description": "Legacy Streamlit mode converted from ERP-SchemeJoiningCashfreePaymentDetailsReconciliation.py",
         "category": "ERP",
         "module": "modes.scheme_joining_cashfree_payment_details_reconciliation",
-        "source": "modules/Custom-SchemeJoiningCashfreePaymentDetailsReconciliation.py",
+        "source": "modules/ERP-SchemeJoiningCashfreePaymentDetailsReconciliation.py",
     },
 ]
 
