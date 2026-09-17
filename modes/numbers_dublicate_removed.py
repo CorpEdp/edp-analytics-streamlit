@@ -1,7 +1,7 @@
 from core.config import LEGACY_DIR
 from core.loader import execute_legacy_script
 
-LEGACY_SOURCE = LEGACY_DIR / "CustomNumbersDublicateRemoved.py"
+LEGACY_SOURCE = LEGACY_DIR / "Custom-NumbersDublicateRemoved.py"
 
 
 def render() -> None:
