@@ -6,3 +6,4 @@ LEGACY_SOURCE = LEGACY_DIR / "ERP-scheme_joining_cashfree_payment_details_reconc
 
 def render() -> None:
     execute_legacy_script(LEGACY_SOURCE)
+    
