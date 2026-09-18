@@ -16,6 +16,11 @@ WINDOW_HEIGHT = 900
 CONNECT_TIMEOUT_SECONDS = 15
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file, code, msg, headers, new_url):
+        return None
+
+
 def _check_url() -> str | None:
     """Return a user-facing error when the hosted app cannot be reached."""
     request = urllib.request.Request(
@@ -23,10 +28,13 @@ def _check_url() -> str | None:
         headers={"User-Agent": f"{APP_TITLE} desktop wrapper"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=CONNECT_TIMEOUT_SECONDS) as response:
+        opener = urllib.request.build_opener(_NoRedirectHandler)
+        with opener.open(request, timeout=CONNECT_TIMEOUT_SECONDS) as response:
             if response.status >= 400:
                 return f"The hosted application returned HTTP {response.status}."
     except urllib.error.HTTPError as error:
+        if 300 <= error.code < 400:
+            return None
         return f"The hosted application returned HTTP {error.code}."
     except urllib.error.URLError as error:
         reason = getattr(error, "reason", error)
