@@ -76,6 +76,7 @@ def _error_page(message: str) -> str:
 
 def main() -> None:
     connection_error = _check_url()
+    webview.settings["ALLOW_DOWNLOADS"] = True
     window_args = {
         "title": APP_TITLE,
         "width": WINDOW_WIDTH,
