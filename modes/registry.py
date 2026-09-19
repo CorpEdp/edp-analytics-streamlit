@@ -101,7 +101,7 @@ MODE_REGISTRY = [
         "id": "e_gold_customer_payment_days_followup_report",
         "name": "E-Gold Customer Payment Days Followup Report",
         "description": "Legacy Streamlit mode converted from App-E-GoldCustomerPaymentDaysFollowupReport.py",
-        "category": "Customer",
+        "category": "App",
         "module": "modes.e_gold_customer_payment_days_followup_report",
         "source": "modules/App-E-GoldCustomerPaymentDaysFollowupReport.py",
     },
