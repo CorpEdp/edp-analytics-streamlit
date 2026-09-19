@@ -198,8 +198,8 @@ MODE_REGISTRY = [
                 "name": "Employee Referral Performance Report",
                 "description": "Legacy Streamlit mode converted from ERP-EmployeeReferralPerformanceReport.py",
                 "category": "App",
-                "module": "modes.scheme_joining_cashfree_payment_details_reconciliation",
-                "source": "modules/ERP-SchemeJoiningCashfreePaymentDetailsReconciliation.py",
+                "module": "modes.employee_referral_performance_report",
+                "source": "modules/ERP-EmployeeReferralPerformanceReport.py",
             },
 ]
 
