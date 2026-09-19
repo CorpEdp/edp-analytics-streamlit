@@ -109,7 +109,7 @@ MODE_REGISTRY = [
         "id": "gateway_cashfree_payment_mode_analytics",
         "name": "Gateway Cashfree Payment Mode Analytics",
         "description": "Legacy Streamlit mode converted from App-GatewayCashfreePaymentModeAnalytics.py",
-        "category": "App",
+        "category": "Cashfree",
         "module": "modes.gateway_cashfree_payment_mode_analytics",
         "source": "modules/App-GatewayCashfreePaymentModeAnalytics.py",
     },
