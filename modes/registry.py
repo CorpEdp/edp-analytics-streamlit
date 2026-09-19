@@ -85,7 +85,7 @@ MODE_REGISTRY = [
         "id": "due_remaining_report",
         "name": "Due Remaining Report",
         "description": "Legacy Streamlit mode converted from App-DueRemainingReport.py",
-        "category": "Payment",
+        "category": "App",
         "module": "modes.due_remaining_report",
         "source": "modules/App-DueRemainingReport.py",
     },
