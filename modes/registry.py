@@ -79,7 +79,7 @@ MODE_REGISTRY = [
         "description": "Legacy Streamlit mode converted from App-Day-SchemeEnrollmentCollectionReport.py",
         "category": "App",
         "module": "modes.day_scheme_enrollment_collection_report",
-        "source": "modules/App-Day-SchemeEnrollmentCollectionReport.py",
+        "source": "modules/ADay-SchemeEnrollmentCollectionReport.py",
     },
     {
         "id": "due_remaining_report",
