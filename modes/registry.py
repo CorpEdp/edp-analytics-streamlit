@@ -133,7 +133,7 @@ MODE_REGISTRY = [
         "id": "our_teamwise_referral_status",
         "name": "Our Teamwise Referral Status",
         "description": "Legacy Streamlit mode converted from App-OurTeamwiseReferralStatus.py",
-        "category": "Referral",
+        "category": "Team",
         "module": "modes.our_teamwise_referral_status",
         "source": "modules/App-OurTeamwiseReferralStatus.py",
     },
