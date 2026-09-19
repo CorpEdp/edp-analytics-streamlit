@@ -1,7 +1,7 @@
 from core.config import LEGACY_DIR
 from core.loader import execute_legacy_script
 
-LEGACY_SOURCE = LEGACY_DIR / "App-Employee_Referral_Performance_Report.py"
+LEGACY_SOURCE = LEGACY_DIR / "App-EmployeeReferralPerformanceReport.py"
 
 
 def render() -> None:
