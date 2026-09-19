@@ -117,7 +117,7 @@ MODE_REGISTRY = [
         "id": "month_scheme_enrollment_collection_report",
         "name": "Month Scheme Enrollment and Collection Report",
         "description": "Legacy Streamlit mode converted from App-Month-SchemeEnrollmentCollectionReport.py",
-        "category": "Scheme",
+        "category": "App",
         "module": "modes.month_scheme_enrollment_collection_report",
         "source": "modules/App-Month-SchemeEnrollmentCollectionReport.py",
     },
