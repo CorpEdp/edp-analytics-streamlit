@@ -1,10 +1,3 @@
-"""
-Auto-converted from: App-Day-SchemeEnrollmentCollectionReport.py
-Review this file before using — the converter does a best-effort wrap;
-double-check indentation around any unusual control flow (loops, if/else
-blocks that span large sections, etc.).
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -17,6 +10,54 @@ from collections import defaultdict
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import warnings
+
+warnings.filterwarnings("ignore")
+
+
+# ============================================================
+# PAGE CONFIG
+# ============================================================
+
+st.set_page_config(
+    page_title="Scheme Enrollment & Collection Report",
+    page_icon="💰",
+    layout="wide"
+)
+
+
+# ============================================================
+# TITLE
+# ============================================================
+
+st.title("💰 Scheme Enrollment & Collection Report")
+st.caption("Enrollment = Joined Date filled within period. "
+           "Not Enrolled = blank Joined Date with Registered Date inside period.")
+
+
+# ============================================================
+# REQUIRED COLUMNS
+# ============================================================
+
+REQUIRED_COLUMNS = [
+    "Id", "Scheme Participation Id", "Date", "Status", "Saved Amount",
+    "Reward Amount", "Transaction Reference", "Installment number",
+    "Metal Type", "Metal Rate", "Saved Metal Weight", "Rewards Metal Weight",
+    "Benefit Metal Amount", "Benefit Metal Weight", "Benefit Metal Percentage",
+    "Receipt ID", "Customer Name", "Customer Phone Number",
+    "Passbook number", "Scheme Name"
+]
+
+
+# ============================================================
+# SCHEME CLASSIFICATION
+# ============================================================
+
+DAILY_SCHEME_KEYS = [
+    "e-gold", "egold", "e gold",
+    "e-silver", "esilver", "e silver",
+]
+
+
 def _scheme_priority(scheme):
     if not scheme:
         return 100
@@ -26,6 +67,8 @@ def _scheme_priority(scheme):
     if "e-silver" in s or "esilver" in s or "e silver" in s:
         return 1
     return 50
+
+
 def classify_scheme_type(scheme_name):
     if pd.isna(scheme_name):
         return "sessional"
@@ -34,6 +77,30 @@ def classify_scheme_type(scheme_name):
         if key in text:
             return "daily"
     return "sessional"
+
+
+# ============================================================
+# SCHEME NAME NORMALISATION
+# ============================================================
+
+SCHEME_NORMALISE_MAP = {
+    "valatine's day": "Valentine's Day",
+    "valentine's day": "Valentine's Day",
+    "valentines day": "Valentine's Day",
+    "valantine's day": "Valentine's Day",
+    "akshaya thrithiyai": "Akshaya Tritiya",
+    "akshaya trithiya": "Akshaya Tritiya",
+    "akshaya thritiya": "Akshaya Tritiya",
+    "akshaya tritiya": "Akshaya Tritiya",
+    "e gold": "e-Gold",
+    "egold": "e-Gold",
+    "e-gold": "e-Gold",
+    "e silver": "e-Silver",
+    "esilver": "e-Silver",
+    "e-silver": "e-Silver",
+}
+
+
 def normalise_scheme(name):
     if name is None:
         return name
@@ -46,8 +113,59 @@ def normalise_scheme(name):
     if key == "" or key == "nan":
         return str(name).strip()
     return SCHEME_NORMALISE_MAP.get(key, str(name).strip())
+
+
+SESIONAL_ORDER = {
+    "pongal": 10,
+    "akshaya tritiya": 20,
+    "diwali": 30,
+    "christmas": 40,
+    "valentine's day": 50,
+}
+
+
 def sessional_sort_key(name):
     return SESIONAL_ORDER.get(str(name).strip().lower(), 999)
+
+
+# ============================================================
+# BRANCH MAPPING
+# ============================================================
+
+BRANCH_MAPPING = {
+    "bhima jewellery - madurai": "MDU",
+    "head office": "MDU",
+    "madurai branch": "MDU",
+    "bhima jewellery - telecaller": "MDU-Telecalling",
+    "bhima jewellery - marthandam": "MDM",
+    "bhima jewellery - salem": "SLM",
+    "app showroom location": "SLM",
+    "in-transit- locations": "SLM",
+    "in-transit locations": "SLM",
+    "n/a": "Unassigned",
+    "bhima jewellery - tirunelveli": "TVL",
+    "bhima jewellery - tiruchirappalli": "TCY",
+    "trichy branch": "TCY",
+    "bhima jewellery -  rajapalayam": "RJPM",
+    "bhima jewellery - rajapalayam": "RJPM",
+    "rajapalayam branch": "RJPM",
+    "bhima jewellery - dindigul": "DGL",
+    "dindigul branch": "DGL",
+    "bhima jewellery - noida": "ND",
+    "bhima jewellery - virudhunagar": "VNR",
+    "bhima jewellery -anna nagar": "AN",
+    "bhima jewellery - anna nagar": "AN",
+    "bhima jewellery - thanjavur": "TJR",
+    "bhima jewellery -thanjavur": "TJR",
+}
+
+BRANCH_ORDER = [
+    "MDU", "MDM", "SLM", "TVL", "TCY", "RJPM",
+    "DGL", "ND", "VNR", "TJR", "AN", "MDU-Telecalling",
+    "Unassigned",
+]
+
+
 def normalize_branch(branch_name):
     if pd.isna(branch_name):
         return "Skip"
@@ -62,14 +180,33 @@ def normalize_branch(branch_name):
         if k_norm and k_norm in key:
             return v
     return "Skip"
+
+
+# ============================================================
+# FLEXIBLE BRANCH NAME TRANSFORMATION
+# ============================================================
+
+FIXED_BRANCH_GROUPS = [
+    ["madurai"], ["marthandam"], ["salem"], ["tirunelveli"],
+    ["trichy", "tiruchirappalli", "tiruchirapalli"],
+    ["rajapalayam", "rajapalaiyam", "rajapalayem"],
+    ["dindigul"], ["noida"], ["virudhunagar", "virudunagar"], ["thanjavur"],
+]
+TELECALLER_KEYWORDS = ["telecaller", "tele caller", "tellecaller"]
+
+
 def _is_telecaller_branch(branch):
     return any(k in str(branch).lower() for k in TELECALLER_KEYWORDS)
+
+
 def _fixed_rank(branch):
     branch_l = str(branch).lower()
     for i, aliases in enumerate(FIXED_BRANCH_GROUPS):
         if any(alias in branch_l for alias in aliases):
             return i
     return None
+
+
 def build_branch_order(all_branches):
     all_branches = sorted(set(b for b in all_branches if pd.notna(b) and str(b).strip() != ''))
     telecaller = sorted([b for b in all_branches if _is_telecaller_branch(b)])
@@ -78,6 +215,8 @@ def build_branch_order(all_branches):
     fixed_present.sort(key=_fixed_rank)
     new_branches = sorted([b for b in remaining if _fixed_rank(b) is None])
     return fixed_present + new_branches + telecaller
+
+
 def sort_branches_df(df, ordered_branches, branch_col='Branch'):
     if branch_col not in df.columns or len(df) == 0:
         return df
@@ -86,6 +225,12 @@ def sort_branches_df(df, ordered_branches, branch_col='Branch'):
     df['_branch_sort_key'] = df[branch_col].map(lambda b: order_map.get(b, len(ordered_branches)))
     df = df.sort_values('_branch_sort_key', kind='stable').drop(columns=['_branch_sort_key'])
     return df
+
+
+# ============================================================
+# PHONE / DATE / AMOUNT NORMALIZATION
+# ============================================================
+
 def clean_phone_scalar(value):
     if pd.isna(value):
         return ""
@@ -102,8 +247,12 @@ def clean_phone_scalar(value):
     if len(digits) > 10:
         digits = digits[-10:]
     return digits
+
+
 def clean_phone(series):
     return series.apply(clean_phone_scalar)
+
+
 def _parse_date_flexible(date_val):
     if pd.isna(date_val) or date_val == '':
         return pd.NaT
@@ -126,6 +275,8 @@ def _parse_date_flexible(date_val):
         return pd.to_datetime(date_str).normalize()
     except Exception:
         return pd.NaT
+
+
 def clean_amount_scalar(value):
     if pd.isna(value):
         return np.nan
@@ -136,6 +287,8 @@ def clean_amount_scalar(value):
         return float(s)
     except Exception:
         return np.nan
+
+
 def find_column(df, candidates):
     lookup = {str(c).strip().lower(): c for c in df.columns}
     for cand in candidates:
@@ -143,9 +296,17 @@ def find_column(df, candidates):
         if key in lookup:
             return lookup[key]
     return None
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
 def clean_columns(df):
     df.columns = (df.columns.astype(str).str.strip().str.replace(r"\s+", " ", regex=True))
     return df
+
+
 def clean_amount(series):
     return pd.to_numeric(
         series.astype(str)
@@ -156,12 +317,18 @@ def clean_amount(series):
         .str.strip(),
         errors="coerce"
     ).fillna(0)
+
+
 def clean_text(series):
     return (series.astype(str).str.strip().replace(["nan", "None", "NaN", ""], np.nan))
+
+
 def round_value(value):
     if pd.isna(value):
         return 0
     return round(value)
+
+
 def round_df(df, exclude_columns=None):
     result = df.copy()
     exclude_columns = exclude_columns or []
@@ -171,6 +338,8 @@ def round_df(df, exclude_columns=None):
         if pd.api.types.is_numeric_dtype(result[col]):
             result[col] = result[col].apply(round_value)
     return result
+
+
 def get_scheme_list(df, scheme_type="all"):
     if "Scheme" not in df.columns:
         return []
@@ -180,6 +349,8 @@ def get_scheme_list(df, scheme_type="all"):
     elif scheme_type == "sessional":
         return [s for s in schemes if classify_scheme_type(s) == "sessional"]
     return schemes
+
+
 def get_all_transaction_schemes(df):
     if "Scheme" not in df.columns:
         return []
@@ -187,6 +358,12 @@ def get_all_transaction_schemes(df):
     schemes = schemes[schemes != ""]
     schemes = schemes.apply(normalise_scheme)
     return sorted(schemes.unique().tolist())
+
+
+# ============================================================
+# EXCEL FORMATTING
+# ============================================================
+
 def apply_cell_style(cell, fill=None, font=None, alignment=None, number_format=None, border=None):
     if fill:
         cell.fill = fill
@@ -198,6 +375,8 @@ def apply_cell_style(cell, fill=None, font=None, alignment=None, number_format=N
         cell.number_format = number_format
     if border:
         cell.border = border
+
+
 def write_section_header(worksheet, row, title, max_column, color="4472C4"):
     if max_column < 1:
         max_column = 1
@@ -219,6 +398,8 @@ def write_section_header(worksheet, row, title, max_column, color="4472C4"):
             bottom=Side(style="thin", color=color)
         )
     worksheet.row_dimensions[row].height = 25
+
+
 def format_dataframe_section(worksheet, dataframe, start_row, header_rows=1, total_identifier=None):
     if dataframe.empty:
         return
@@ -250,6 +431,8 @@ def format_dataframe_section(worksheet, dataframe, start_row, header_rows=1, tot
             apply_cell_style(cell, fill=fill, font=font,
                              alignment=Alignment(horizontal="center", vertical="center"),
                              number_format=number_format, border=thin_border)
+
+
 def write_projection_section(worksheet, start_row, enrollment_df, collection_df, month_label, thin_border):
     if enrollment_df.empty and collection_df.empty:
         return
@@ -302,6 +485,8 @@ def write_projection_section(worksheet, start_row, enrollment_df, collection_df,
             cell.border = thin_border
             if col_idx in (2, 3, 6, 7):
                 cell.number_format = '#,##0'
+
+
 def write_avg_ticket_section(worksheet, start_row, avg_ticket_data, thin_border):
     if avg_ticket_data.empty:
         return
@@ -386,6 +571,8 @@ def write_avg_ticket_section(worksheet, start_row, avg_ticket_data, thin_border)
                     cell.font = Font(bold=True, color="006100")
                 else:
                     cell.font = Font(bold=True, color="000000")
+
+
 def write_sheet(workbook, sheet_data):
     worksheet = workbook.create_sheet(sheet_data["sheet_name"])
     summary_df = sheet_data["summary"]
@@ -592,6 +779,12 @@ def write_sheet(workbook, sheet_data):
     worksheet.page_setup.fitToWidth = 1
     worksheet.page_setup.fitToHeight = 0
     worksheet.sheet_properties.pageSetUpPr.fitToPage = True
+
+
+# ============================================================
+# REFERRAL REPORT — PERIOD-SCOPED ENROLLMENT LOGIC
+# ============================================================
+
 def _fmt_cell(val):
     if val is None:
         return "-"
@@ -608,6 +801,8 @@ def _fmt_cell(val):
     if isinstance(val, str) and val.strip() == "":
         return "-"
     return val
+
+
 def read_uploaded_file(uploaded):
     if uploaded is None:
         return None
@@ -618,6 +813,8 @@ def read_uploaded_file(uploaded):
     except Exception as e:
         st.error(f"Error reading {uploaded.name}: {e}")
         return None
+
+
 def _transform_branch_pretty(branch):
     if pd.isna(branch) or str(branch).strip() == "":
         return "Bhima Jewellery - Customer"
@@ -643,6 +840,8 @@ def _transform_branch_pretty(branch):
     final_branch = final_branch.replace("TIRUCHIRAPPALLI", "Trichy")
     final_branch = final_branch.replace("tiruchirappalli", "Trichy")
     return final_branch
+
+
 def build_referral_report(transactions_df, employees_df, referrals_df, bss_df=None,
                           start_date=None, end_date=None,
                           master_scheme_list=None):
@@ -1175,6 +1374,12 @@ def build_referral_report(transactions_df, employees_df, referrals_df, bss_df=No
     daily_not_enrolled_list = []
 
     return pivot, daily_list, detail_df, diagnostics, duplicates_df, debug_info, daily_not_enrolled_list
+
+
+# ============================================================
+# REFERRAL EXCEL WRITER
+# ============================================================
+
 def write_referral_sheet(workbook, summary_df, daily_list, detail_df, duplicates_df,
                          date_range, sheet_name="Referral Report",
                          not_enrolled_daily=None):
@@ -1366,6 +1571,12 @@ def write_referral_sheet(workbook, summary_df, daily_list, detail_df, duplicates
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+
+# ============================================================
+# CREATE FORMATTED EXCEL
+# ============================================================
+
 def create_formatted_excel(daily_data, sessional_data, date_range, report_title,
                            referral_summary=None, referral_daily=None,
                            referral_detail=None, referral_duplicates=None,
@@ -1397,6 +1608,12 @@ def create_formatted_excel(daily_data, sessional_data, date_range, report_title,
             placeholder["A1"] = "No data matched the selected filters."
     output.seek(0)
     return output.getvalue()
+
+
+# ============================================================
+# AVG TICKET SIZE
+# ============================================================
+
 def add_avg_ticket_size_comparison(summary_df):
     if summary_df.empty:
         return pd.DataFrame()
@@ -1445,6 +1662,8 @@ def add_avg_ticket_size_comparison(summary_df):
         "Difference": int(round(tdiff)), "% Change": tpct,
     })
     return pd.DataFrame(result_data)
+
+
 def display_avg_ticket_comparison(avg_ticket_df):
     if avg_ticket_df.empty:
         return
@@ -1466,6 +1685,116 @@ def display_avg_ticket_comparison(avg_ticket_df):
             lambda x: f"{x * 100:.2f}%" if isinstance(x, (int, float)) else x
         )
     st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+
+# ============================================================
+# FILE UPLOAD
+# ============================================================
+
+st.sidebar.header("📂 File Uploads")
+
+uploaded_file = st.sidebar.file_uploader(
+    "1️⃣ Main Transaction File (Required)",
+    type=["xlsx", "xls", "csv"], key="main_file"
+)
+uploaded_employee = st.sidebar.file_uploader(
+    "2️⃣ Employee Details File (For Referral Report)",
+    type=["xlsx", "xls", "csv"], key="employee_file"
+)
+uploaded_referral = st.sidebar.file_uploader(
+    "3️⃣ Referral Details File (For Referral Report)",
+    type=["xlsx", "xls", "csv"], key="referral_file"
+)
+
+if uploaded_file is None:
+    st.info("Please upload your raw transaction Excel/CSV file (1️⃣) from the sidebar.")
+    st.stop()
+
+
+# ============================================================
+# READ MAIN FILE
+# ============================================================
+
+try:
+    if uploaded_file.name.lower().endswith(".csv"):
+        df = pd.read_csv(uploaded_file, low_memory=False)
+    else:
+        df = pd.read_excel(uploaded_file)
+except Exception as e:
+    st.error(f"❌ Error reading file: {e}")
+    st.stop()
+
+df = clean_columns(df)
+missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+if missing_columns:
+    st.error("❌ Required columns are missing.")
+    st.write("Missing columns:", missing_columns)
+    st.stop()
+
+df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
+df["Saved Amount"] = clean_amount(df["Saved Amount"])
+df["Metal Rate"] = clean_amount(df["Metal Rate"])
+df["Installment number"] = pd.to_numeric(df["Installment number"], errors="coerce")
+df["Passbook number"] = clean_text(df["Passbook number"])
+df["Scheme Name"] = clean_text(df["Scheme Name"])
+df["Customer Phone Number"] = clean_text(df["Customer Phone Number"])
+df["Customer Name"] = clean_text(df["Customer Name"])
+
+df = df[df["Date"].notna()].copy()
+if df.empty:
+    st.error("❌ No valid Date records found.")
+    st.stop()
+df["Date"] = df["Date"].dt.normalize()
+
+rows_before = len(df)
+df = df[df["Scheme Name"].notna()].copy()
+if rows_before - len(df) > 0:
+    st.sidebar.warning(f"⚠️ Skipped {rows_before - len(df)} row(s) with a blank 'Scheme Name'.")
+
+df["Scheme"] = df["Scheme Name"].astype(str).str.strip().apply(normalise_scheme)
+
+
+# ============================================================
+# FILTERS
+# ============================================================
+
+st.sidebar.header("🔎 Report Filters")
+minimum_date = df["Date"].min().date()
+maximum_date = df["Date"].max().date()
+
+date_range = st.sidebar.date_input(
+    "Date Range", value=(minimum_date, maximum_date),
+    min_value=minimum_date, max_value=maximum_date
+)
+
+if isinstance(date_range, tuple):
+    if len(date_range) == 2:
+        start_date = pd.Timestamp(date_range[0])
+        end_date = pd.Timestamp(date_range[1])
+    else:
+        start_date = pd.Timestamp(date_range[0])
+        end_date = start_date
+else:
+    start_date = pd.Timestamp(date_range)
+    end_date = start_date
+
+all_schemes = get_scheme_list(df)
+selected_schemes = st.sidebar.multiselect("Select Schemes", options=all_schemes, default=all_schemes)
+
+filtered_df = df.copy()
+filtered_df = filtered_df[(filtered_df["Date"] >= start_date) & (filtered_df["Date"] <= end_date)].copy()
+filtered_df = filtered_df[filtered_df["Scheme"].isin(selected_schemes)].copy()
+filtered_df = filtered_df.sort_values(["Passbook number", "Date", "Id"])
+
+if filtered_df.empty:
+    st.warning("⚠️ No records found for the selected filters.")
+    st.stop()
+
+
+# ============================================================
+# RATE COLUMN NAME
+# ============================================================
+
 def get_rate_column_name(scheme):
     if pd.isna(scheme):
         return None
@@ -1479,6 +1808,17 @@ def get_rate_column_name(scheme):
     elif "akshaya tritiya" in sl:
         return "Gold Rate"
     return f"{scheme} Rate"
+
+
+# ============================================================
+# GENERATE REPORT DATA
+# ============================================================
+# Averages (per-scheme AND Grand Total) are computed against the
+# number of distinct calendar days in the selected report range, so
+# every scheme is directly comparable.
+# ============================================================
+
+@st.cache_data(show_spinner=False)
 def generate_report_data(df, schemes, start_date=None, end_date=None):
     if not schemes or df.empty:
         return (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
@@ -1668,6 +2008,13 @@ def generate_report_data(df, schemes, start_date=None, end_date=None):
     avg_ticket_df = round_df(avg_ticket_df, exclude_columns=["% Change"]) if not avg_ticket_df.empty else avg_ticket_df
 
     return summary_df, enrollment_df, collection_df_report, unique_df, avg_ticket_df
+
+
+# ============================================================
+# MONTHLY PROJECTION
+# ============================================================
+
+@st.cache_data(show_spinner=False)
 def generate_monthly_projection(full_df, schemes, reference_date=None):
     empty = pd.DataFrame(columns=["Scheme", "Projected Count", "Projected Amount"])
     if full_df.empty or not schemes:
@@ -1708,6 +2055,360 @@ def generate_monthly_projection(full_df, schemes, reference_date=None):
             "Projected Amount": round_value((c["Saved Amount"].sum() / days_elapsed) * days_in_month),
         })
     return pd.DataFrame(enrollment_rows), pd.DataFrame(collection_rows), month_label
+
+
+# ============================================================
+# GENERATE MAIN REPORTS
+# ============================================================
+
+daily_schemes = [s for s in selected_schemes if classify_scheme_type(s) == "daily"]
+daily_df = filtered_df[filtered_df["Scheme"].isin(daily_schemes)].copy()
+
+sessional_schemes = [s for s in selected_schemes if classify_scheme_type(s) == "sessional"]
+sessional_df = filtered_df[filtered_df["Scheme"].isin(sessional_schemes)].copy()
+
+with st.spinner("Crunching daily-scheme numbers..."):
+    daily_summary, daily_enrollment, daily_collection, daily_unique, daily_avg_ticket = generate_report_data(
+        daily_df, daily_schemes, start_date=start_date, end_date=end_date
+    )
+
+with st.spinner("Crunching sessional-scheme numbers..."):
+    sessional_summary, sessional_enrollment, sessional_collection, sessional_unique, sessional_avg_ticket = generate_report_data(
+        sessional_df, sessional_schemes, start_date=start_date, end_date=end_date
+    )
+
+daily_enrollment_projection, daily_collection_projection, daily_projection_label = generate_monthly_projection(
+    df, daily_schemes, reference_date=end_date
+)
+sessional_enrollment_projection, sessional_collection_projection, sessional_projection_label = generate_monthly_projection(
+    df, sessional_schemes, reference_date=end_date
+)
+
+
+# ============================================================
+# MASTER SCHEME LIST
+# ============================================================
+
+all_txn_schemes = get_all_transaction_schemes(df)
+st.sidebar.caption(f"📋 Master scheme list: {len(all_txn_schemes)} scheme(s) → "
+                   + ", ".join(all_txn_schemes[:8])
+                   + (" ..." if len(all_txn_schemes) > 8 else ""))
+
+
+# ============================================================
+# REFERRAL REPORT
+# ============================================================
+
+referral_summary = pd.DataFrame()
+referral_daily_list = []
+referral_not_enrolled_daily_list = []
+referral_detail = pd.DataFrame()
+referral_diagnostics = {}
+referral_duplicates = pd.DataFrame()
+referral_debug = {}
+employee_df_raw = None
+referral_df_raw = None
+
+referral_files_present = uploaded_employee is not None and uploaded_referral is not None
+
+if referral_files_present:
+    employee_df_raw = read_uploaded_file(uploaded_employee)
+    referral_df_raw = read_uploaded_file(uploaded_referral)
+
+    if employee_df_raw is not None and referral_df_raw is not None:
+        with st.spinner("Processing referrals (period-scoped enrollment)..."):
+            (referral_summary,
+             referral_daily_list,
+             referral_detail,
+             referral_diagnostics,
+             referral_duplicates,
+             referral_debug,
+             referral_not_enrolled_daily_list) = build_referral_report(
+                filtered_df, employee_df_raw, referral_df_raw, None,
+                start_date=start_date, end_date=end_date,
+                master_scheme_list=all_txn_schemes,
+            )
+
+        if referral_diagnostics:
+            st.info(
+                f"📅 **Report Period:** {referral_diagnostics.get('date_filter', 'none')}  |  "
+                f"📊 {referral_diagnostics.get('matched_referrals', 0)} enrolled / "
+                f"{referral_diagnostics.get('total_referrals', 0)} total "
+                f"(**{referral_diagnostics.get('not_enrolled', 0)}** not enrolled)"
+                + (f" — **{referral_diagnostics.get('duplicates', 0)}** duplicate(s) flagged"
+                   if referral_diagnostics.get('duplicates') else "")
+                + (f" — **{referral_diagnostics.get('collisions_cleared', 0)}** txn collision(s) cleared"
+                   if referral_diagnostics.get('collisions_cleared') else "")
+            )
+            if referral_diagnostics.get("scope_warning"):
+                st.warning(f"⚠️ {referral_diagnostics['scope_warning']}")
+
+
+# ============================================================
+# DEBUG PANEL
+# ============================================================
+
+if referral_files_present and referral_debug:
+    st.header("🧪 Debug — Match Analysis")
+
+    with st.expander("📊 Referral Funnel", expanded=True):
+        c1, c2, c3, c4, c5 = st.columns(5)
+        with c1:
+            st.metric("Raw referral rows", f"{referral_debug.get('referral_raw_count', 0):,}")
+        with c2:
+            st.metric("Dropped (outside period)", f"{referral_debug.get('dropped_out_of_period', 0):,}")
+        with c3:
+            st.metric("In-scope for report", f"{referral_debug.get('referral_after_date_filter', 0):,}")
+        with c4:
+            st.metric("Enrolled", f"{referral_diagnostics.get('matched_referrals', 0):,}")
+        with c5:
+            st.metric("Not Enrolled (in period)", f"{referral_diagnostics.get('not_enrolled', 0):,}")
+
+    with st.expander("🎯 Strict Match Analysis", expanded=True):
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("✅ Strict match (phone+date+amount)",
+                      f"{referral_debug.get('strict_match_count', 0):,}")
+        with c2:
+            st.metric("❌ Weak match rejected (phone+date only)",
+                      f"{referral_debug.get('weak_match_rejected', 0):,}")
+        with c3:
+            st.metric("⚠️ Txn collisions cleared",
+                      f"{referral_debug.get('collisions_cleared', 0):,}")
+        with c4:
+            st.metric("🔀 Multi-scheme same day (first picked)",
+                      f"{referral_debug.get('multi_scheme_same_day', 0):,}")
+
+    with st.expander("📋 Not Enrolled Reason Breakdown"):
+        if referral_debug.get('not_enrolled_breakdown'):
+            st.dataframe(
+                pd.DataFrame([
+                    {"Reason": k, "Count": v}
+                    for k, v in referral_debug['not_enrolled_breakdown'].items()
+                ]),
+                use_container_width=True, hide_index=True
+            )
+
+    with st.expander("🔍 Branch × Category Pivot (in-scope)"):
+        if not referral_detail.empty:
+            grp = referral_detail.groupby(['Branch', 'Category']).size().reset_index(name='Count')
+            pivot_dbg = grp.pivot(index='Branch', columns='Category', values='Count').fillna(0).astype(int)
+            st.dataframe(pivot_dbg, use_container_width=True)
+
+
+# ============================================================
+# PREVIEW
+# ============================================================
+
+st.header("📋 Formatted Report Preview")
+
+if daily_schemes and not daily_summary.empty:
+    st.subheader("📅 Daily Schemes (e-Gold & e-Silver)")
+    st.dataframe(daily_summary, use_container_width=True, hide_index=True)
+    if not daily_avg_ticket.empty:
+        display_avg_ticket_comparison(daily_avg_ticket)
+    if not daily_enrollment_projection.empty or not daily_collection_projection.empty:
+        st.markdown(f"**📈 Monthly Projection — {daily_projection_label}**")
+        c5, c6 = st.columns(2)
+        with c5:
+            st.caption("Projection — first enrollments")
+            st.dataframe(daily_enrollment_projection, use_container_width=True, hide_index=True)
+        with c6:
+            st.caption("Projection — overall collection")
+            st.dataframe(daily_collection_projection, use_container_width=True, hide_index=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.dataframe(daily_enrollment, use_container_width=True, hide_index=True)
+    with c2:
+        st.dataframe(daily_collection, use_container_width=True, hide_index=True)
+    st.dataframe(daily_unique, use_container_width=True, hide_index=True)
+
+if sessional_schemes and not sessional_summary.empty:
+    st.subheader("🎯 Sessional Schemes")
+    st.dataframe(sessional_summary, use_container_width=True, hide_index=True)
+    if not sessional_avg_ticket.empty:
+        display_avg_ticket_comparison(sessional_avg_ticket)
+    if not sessional_enrollment_projection.empty or not sessional_collection_projection.empty:
+        st.markdown(f"**📈 Monthly Projection — {sessional_projection_label}**")
+        c5, c6 = st.columns(2)
+        with c5:
+            st.caption("Projection — first enrollments")
+            st.dataframe(sessional_enrollment_projection, use_container_width=True, hide_index=True)
+        with c6:
+            st.caption("Projection — overall collection")
+            st.dataframe(sessional_collection_projection, use_container_width=True, hide_index=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.dataframe(sessional_enrollment, use_container_width=True, hide_index=True)
+    with c2:
+        st.dataframe(sessional_collection, use_container_width=True, hide_index=True)
+    st.dataframe(sessional_unique, use_container_width=True, hide_index=True)
+
+
+# ============================================================
+# REFERRAL PREVIEW
+# ============================================================
+
+if referral_files_present:
+    st.header("🎁 Referral Conversion Report")
+    if referral_summary.empty:
+        st.warning("⚠️ No referral data found. Check the debug panel above.")
+    else:
+        st.subheader(
+            f"🏢 Branch-wise Referral Summary — "
+            f"{start_date.strftime('%d-%m-%Y')} to {end_date.strftime('%d-%m-%Y')}"
+        )
+        display_summary = referral_summary.copy()
+        for col in display_summary.columns[1:]:
+            display_summary[col] = display_summary[col].apply(
+                lambda x: "-" if (isinstance(x, (int, float)) and x == 0) else x
+            )
+        st.dataframe(display_summary, use_container_width=True, hide_index=True)
+
+        if referral_daily_list:
+            st.subheader("📅 Daily Referral Breakdown")
+            for date_label, day_df in referral_daily_list:
+                st.markdown(f"**📅 REFERRAL — {date_label}**")
+                day_display = day_df.copy()
+                for col in day_display.columns[1:]:
+                    day_display[col] = day_display[col].apply(
+                        lambda x: "-" if (isinstance(x, (int, float)) and x == 0) else x
+                    )
+                st.dataframe(day_display, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("📋 Referral Match Details — All Rows")
+
+        dd = referral_detail.copy()
+        for col in ["Registered Date", "Joined Date", "Transaction Date"]:
+            if col in dd.columns:
+                dd[col] = dd[col].apply(
+                    lambda x: x.strftime("%d-%m-%Y") if pd.notna(x) else ""
+                )
+
+        fcol1, fcol2, fcol3, fcol4 = st.columns(4)
+        with fcol1:
+            status_filter = st.selectbox(
+                "Match Status",
+                ["All", "Enrolled Only", "Not Enrolled Only"],
+                key="ref_detail_status_filter"
+            )
+        with fcol2:
+            branches_in_detail = sorted(dd['Branch'].dropna().unique().tolist())
+            branch_filter = st.multiselect(
+                "Filter by Branch",
+                options=branches_in_detail,
+                default=[],
+                key="ref_detail_branch_filter",
+                help="Leave empty for ALL branches"
+            )
+        with fcol3:
+            categories_in_detail = sorted(dd['Category'].dropna().unique().tolist())
+            category_filter = st.multiselect(
+                "Filter by Category",
+                options=categories_in_detail,
+                default=[],
+                key="ref_detail_category_filter",
+                help="Leave empty for ALL categories"
+            )
+        with fcol4:
+            search_text = st.text_input(
+                "🔎 Search (name / phone / passbook)",
+                key="ref_detail_search"
+            )
+
+        dd_filtered = dd.copy()
+        if status_filter == "Enrolled Only":
+            dd_filtered = dd_filtered[dd_filtered['Category'] != 'Not Enrolled']
+        elif status_filter == "Not Enrolled Only":
+            dd_filtered = dd_filtered[dd_filtered['Category'] == 'Not Enrolled']
+        if branch_filter:
+            dd_filtered = dd_filtered[dd_filtered['Branch'].isin(branch_filter)]
+        if category_filter:
+            dd_filtered = dd_filtered[dd_filtered['Category'].isin(category_filter)]
+        if search_text:
+            term = search_text.strip().lower()
+            mask = (
+                dd_filtered['Referee Name'].astype(str).str.lower().str.contains(term, na=False) |
+                dd_filtered['Referee Phone'].astype(str).str.lower().str.contains(term, na=False) |
+                dd_filtered['Referrer Name'].astype(str).str.lower().str.contains(term, na=False) |
+                dd_filtered['Passbook'].astype(str).str.lower().str.contains(term, na=False)
+            )
+            dd_filtered = dd_filtered[mask]
+
+        total_rows = len(referral_detail)
+        enrolled_rows = len(referral_detail[referral_detail['Category'] != 'Not Enrolled'])
+        not_enrolled_rows = total_rows - enrolled_rows
+        filtered_rows = len(dd_filtered)
+
+        mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+        with mcol1:
+            st.metric("Total in Report", f"{total_rows:,}")
+        with mcol2:
+            st.metric("✅ Enrolled", f"{enrolled_rows:,}")
+        with mcol3:
+            st.metric("❌ Not Enrolled", f"{not_enrolled_rows:,}")
+        with mcol4:
+            st.metric("Showing (after filters)", f"{filtered_rows:,}")
+
+        dd_display = dd_filtered.drop(
+            columns=["Match Date", "Joined Date Str", "Registered Date Str", "Display Day"],
+            errors="ignore"
+        ).copy()
+
+        def highlight_rows(row):
+            if row.get('Category') == 'Not Enrolled':
+                return ['background-color: #ffe6e6'] * len(row)
+            else:
+                return ['background-color: #e6ffe6'] * len(row)
+
+        if len(dd_display) <= 5000:
+            styled_dd = dd_display.style.apply(highlight_rows, axis=1)
+            st.dataframe(styled_dd, use_container_width=True, height=600)
+        else:
+            st.info(f"ℹ️ Showing {len(dd_display):,} rows without highlighting for performance")
+            st.dataframe(dd_display, use_container_width=True, height=600)
+
+        csv_buffer = io.StringIO()
+        dd_display.to_csv(csv_buffer, index=False)
+        st.download_button(
+            label="📥 Download Filtered Match Details (CSV)",
+            data=csv_buffer.getvalue(),
+            file_name=f"referral_match_details_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+        if not_enrolled_rows > 0:
+            with st.expander(f"❌ View {not_enrolled_rows} Not Enrolled Rows (blank Joined Date, Registered in period)"):
+                ne_df = referral_detail[referral_detail['Category'] == 'Not Enrolled'].copy()
+                for col in ["Registered Date", "Joined Date", "Transaction Date"]:
+                    if col in ne_df.columns:
+                        ne_df[col] = ne_df[col].apply(
+                            lambda x: x.strftime("%d-%m-%Y") if pd.notna(x) else ""
+                        )
+                ne_cols = [
+                    'Branch', 'Referee Name', 'Referee Phone',
+                    'Registered Date', 'Joined Date', 'Enrollment Amount',
+                    'Referrer Name', 'Employee Code'
+                ]
+                ne_cols = [c for c in ne_cols if c in ne_df.columns]
+                st.dataframe(ne_df[ne_cols], use_container_width=True, height=500)
+
+        if not referral_duplicates.empty:
+            with st.expander("🔴 View Duplicate Records"):
+                st.dataframe(referral_duplicates, use_container_width=True, hide_index=True)
+else:
+    st.info("💡 Upload Employee + Referral files to see the Referral Report.")
+
+
+# ============================================================
+# DOWNLOAD EXCEL
+# ============================================================
+
+st.header("📥 Download Formatted Report")
+
+
 def generate_clean_filename(start_date, end_date):
     if start_date and end_date:
         mn = start_date.strftime("%B")
@@ -1724,513 +2425,66 @@ def generate_clean_filename(start_date, end_date):
     else:
         return f"Daily enrollment ({pd.Timestamp.now().strftime('%B %Y')})"
 
-LABEL = "Day Scheme Enrollment Collection Report"
 
+clean_filename = generate_clean_filename(start_date, end_date)
+st.info(f"📁 **Report will be saved as:** `{clean_filename}.xlsx`")
 
-def run():
-    warnings.filterwarnings("ignore")
-    st.title("💰 Scheme Enrollment & Collection Report")
-    st.caption("Enrollment = Joined Date filled within period. "
-               "Not Enrolled = blank Joined Date with Registered Date inside period.")
-    REQUIRED_COLUMNS = [
-        "Id", "Scheme Participation Id", "Date", "Status", "Saved Amount",
-        "Reward Amount", "Transaction Reference", "Installment number",
-        "Metal Type", "Metal Rate", "Saved Metal Weight", "Rewards Metal Weight",
-        "Benefit Metal Amount", "Benefit Metal Weight", "Benefit Metal Percentage",
-        "Receipt ID", "Customer Name", "Customer Phone Number",
-        "Passbook number", "Scheme Name"
-    ]
-    DAILY_SCHEME_KEYS = [
-        "e-gold", "egold", "e gold",
-        "e-silver", "esilver", "e silver",
-    ]
-    SCHEME_NORMALISE_MAP = {
-        "valatine's day": "Valentine's Day",
-        "valentine's day": "Valentine's Day",
-        "valentines day": "Valentine's Day",
-        "valantine's day": "Valentine's Day",
-        "akshaya thrithiyai": "Akshaya Tritiya",
-        "akshaya trithiya": "Akshaya Tritiya",
-        "akshaya thritiya": "Akshaya Tritiya",
-        "akshaya tritiya": "Akshaya Tritiya",
-        "e gold": "e-Gold",
-        "egold": "e-Gold",
-        "e-gold": "e-Gold",
-        "e silver": "e-Silver",
-        "esilver": "e-Silver",
-        "e-silver": "e-Silver",
-    }
-    SESIONAL_ORDER = {
-        "pongal": 10,
-        "akshaya tritiya": 20,
-        "diwali": 30,
-        "christmas": 40,
-        "valentine's day": 50,
-    }
-    BRANCH_MAPPING = {
-        "bhima jewellery - madurai": "MDU",
-        "head office": "MDU",
-        "madurai branch": "MDU",
-        "bhima jewellery - telecaller": "MDU-Telecalling",
-        "bhima jewellery - marthandam": "MDM",
-        "bhima jewellery - salem": "SLM",
-        "app showroom location": "SLM",
-        "in-transit- locations": "SLM",
-        "in-transit locations": "SLM",
-        "n/a": "Unassigned",
-        "bhima jewellery - tirunelveli": "TVL",
-        "bhima jewellery - tiruchirappalli": "TCY",
-        "trichy branch": "TCY",
-        "bhima jewellery -  rajapalayam": "RJPM",
-        "bhima jewellery - rajapalayam": "RJPM",
-        "rajapalayam branch": "RJPM",
-        "bhima jewellery - dindigul": "DGL",
-        "dindigul branch": "DGL",
-        "bhima jewellery - noida": "ND",
-        "bhima jewellery - virudhunagar": "VNR",
-        "bhima jewellery -anna nagar": "AN",
-        "bhima jewellery - anna nagar": "AN",
-        "bhima jewellery - thanjavur": "TJR",
-        "bhima jewellery -thanjavur": "TJR",
-    }
-    BRANCH_ORDER = [
-        "MDU", "MDM", "SLM", "TVL", "TCY", "RJPM",
-        "DGL", "ND", "VNR", "TJR", "AN", "MDU-Telecalling",
-        "Unassigned",
-    ]
-    FIXED_BRANCH_GROUPS = [
-        ["madurai"], ["marthandam"], ["salem"], ["tirunelveli"],
-        ["trichy", "tiruchirappalli", "tiruchirapalli"],
-        ["rajapalayam", "rajapalaiyam", "rajapalayem"],
-        ["dindigul"], ["noida"], ["virudhunagar", "virudunagar"], ["thanjavur"],
-    ]
-    TELECALLER_KEYWORDS = ["telecaller", "tele caller", "tellecaller"]
-    st.sidebar.header("📂 File Uploads")
-    uploaded_file = st.sidebar.file_uploader(
-        "1️⃣ Main Transaction File (Required)",
-        type=["xlsx", "xls", "csv"], key="main_file"
-    )
-    uploaded_employee = st.sidebar.file_uploader(
-        "2️⃣ Employee Details File (For Referral Report)",
-        type=["xlsx", "xls", "csv"], key="employee_file"
-    )
-    uploaded_referral = st.sidebar.file_uploader(
-        "3️⃣ Referral Details File (For Referral Report)",
-        type=["xlsx", "xls", "csv"], key="referral_file"
-    )
-    if uploaded_file is None:
-        st.info("Please upload your raw transaction Excel/CSV file (1️⃣) from the sidebar.")
-        st.stop()
-    try:
-        if uploaded_file.name.lower().endswith(".csv"):
-            df = pd.read_csv(uploaded_file, low_memory=False)
-        else:
-            df = pd.read_excel(uploaded_file)
-    except Exception as e:
-        st.error(f"❌ Error reading file: {e}")
-        st.stop()
-    df = clean_columns(df)
-    missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
-    if missing_columns:
-        st.error("❌ Required columns are missing.")
-        st.write("Missing columns:", missing_columns)
-        st.stop()
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
-    df["Saved Amount"] = clean_amount(df["Saved Amount"])
-    df["Metal Rate"] = clean_amount(df["Metal Rate"])
-    df["Installment number"] = pd.to_numeric(df["Installment number"], errors="coerce")
-    df["Passbook number"] = clean_text(df["Passbook number"])
-    df["Scheme Name"] = clean_text(df["Scheme Name"])
-    df["Customer Phone Number"] = clean_text(df["Customer Phone Number"])
-    df["Customer Name"] = clean_text(df["Customer Name"])
-    df = df[df["Date"].notna()].copy()
-    if df.empty:
-        st.error("❌ No valid Date records found.")
-        st.stop()
-    df["Date"] = df["Date"].dt.normalize()
-    rows_before = len(df)
-    df = df[df["Scheme Name"].notna()].copy()
-    if rows_before - len(df) > 0:
-        st.sidebar.warning(f"⚠️ Skipped {rows_before - len(df)} row(s) with a blank 'Scheme Name'.")
-    df["Scheme"] = df["Scheme Name"].astype(str).str.strip().apply(normalise_scheme)
-    st.sidebar.header("🔎 Report Filters")
-    minimum_date = df["Date"].min().date()
-    maximum_date = df["Date"].max().date()
-    date_range = st.sidebar.date_input(
-        "Date Range", value=(minimum_date, maximum_date),
-        min_value=minimum_date, max_value=maximum_date
-    )
-    if isinstance(date_range, tuple):
-        if len(date_range) == 2:
-            start_date = pd.Timestamp(date_range[0])
-            end_date = pd.Timestamp(date_range[1])
-        else:
-            start_date = pd.Timestamp(date_range[0])
-            end_date = start_date
-    else:
-        start_date = pd.Timestamp(date_range)
-        end_date = start_date
-    all_schemes = get_scheme_list(df)
-    selected_schemes = st.sidebar.multiselect("Select Schemes", options=all_schemes, default=all_schemes)
-    filtered_df = df.copy()
-    filtered_df = filtered_df[(filtered_df["Date"] >= start_date) & (filtered_df["Date"] <= end_date)].copy()
-    filtered_df = filtered_df[filtered_df["Scheme"].isin(selected_schemes)].copy()
-    filtered_df = filtered_df.sort_values(["Passbook number", "Date", "Id"])
-    if filtered_df.empty:
-        st.warning("⚠️ No records found for the selected filters.")
-        st.stop()
-    daily_schemes = [s for s in selected_schemes if classify_scheme_type(s) == "daily"]
-    daily_df = filtered_df[filtered_df["Scheme"].isin(daily_schemes)].copy()
-    sessional_schemes = [s for s in selected_schemes if classify_scheme_type(s) == "sessional"]
-    sessional_df = filtered_df[filtered_df["Scheme"].isin(sessional_schemes)].copy()
-    with st.spinner("Crunching daily-scheme numbers..."):
-        daily_summary, daily_enrollment, daily_collection, daily_unique, daily_avg_ticket = generate_report_data(
-            daily_df, daily_schemes, start_date=start_date, end_date=end_date
+report_title = uploaded_file.name.rsplit(".", 1)[0] or "Scheme Enrollment & Collection Report"
+
+daily_data = {
+    "summary": daily_summary if daily_summary is not None and not daily_summary.empty else pd.DataFrame(),
+    "enrollment": daily_enrollment if daily_enrollment is not None and not daily_enrollment.empty else pd.DataFrame(),
+    "collection": daily_collection if daily_collection is not None and not daily_collection.empty else pd.DataFrame(),
+    "unique": daily_unique if daily_unique is not None and not daily_unique.empty else pd.DataFrame(),
+    "schemes": daily_schemes,
+    "date_range": (start_date.strftime("%d-%m-%Y"), end_date.strftime("%d-%m-%Y")),
+    "report_title": "eGold & eSilver Enrollment & Collection Report",
+    "sheet_name": "eGold & eSilver",
+    "enrollment_projection": daily_enrollment_projection,
+    "collection_projection": daily_collection_projection,
+    "projection_month_label": daily_projection_label,
+    "avg_ticket_data": daily_avg_ticket if daily_avg_ticket is not None and not daily_avg_ticket.empty else pd.DataFrame(),
+}
+
+sessional_data = {
+    "summary": sessional_summary if sessional_summary is not None and not sessional_summary.empty else pd.DataFrame(),
+    "enrollment": sessional_enrollment if sessional_enrollment is not None and not sessional_enrollment.empty else pd.DataFrame(),
+    "collection": sessional_collection if sessional_collection is not None and not sessional_collection.empty else pd.DataFrame(),
+    "unique": sessional_unique if sessional_unique is not None and not sessional_unique.empty else pd.DataFrame(),
+    "schemes": sessional_schemes,
+    "date_range": (start_date.strftime("%d-%m-%Y"), end_date.strftime("%d-%m-%Y")),
+    "report_title": "Sessional Scheme Enrollment & Collection Report",
+    "sheet_name": "Sessional Scheme",
+    "enrollment_projection": sessional_enrollment_projection,
+    "collection_projection": sessional_collection_projection,
+    "projection_month_label": sessional_projection_label,
+    "avg_ticket_data": sessional_avg_ticket if sessional_avg_ticket is not None and not sessional_avg_ticket.empty else pd.DataFrame(),
+}
+
+try:
+    with st.spinner("Building the formatted Excel workbook..."):
+        excel_data = create_formatted_excel(
+            daily_data,
+            sessional_data,
+            (start_date.strftime("%d-%m-%Y"), end_date.strftime("%d-%m-%Y")),
+            report_title,
+            referral_summary=referral_summary,
+            referral_daily=referral_daily_list,
+            referral_detail=referral_detail,
+            referral_duplicates=referral_duplicates,
+            referral_not_enrolled_daily=referral_not_enrolled_daily_list,
         )
-    with st.spinner("Crunching sessional-scheme numbers..."):
-        sessional_summary, sessional_enrollment, sessional_collection, sessional_unique, sessional_avg_ticket = generate_report_data(
-            sessional_df, sessional_schemes, start_date=start_date, end_date=end_date
-        )
-    daily_enrollment_projection, daily_collection_projection, daily_projection_label = generate_monthly_projection(
-        df, daily_schemes, reference_date=end_date
+    st.download_button(
+        label="⬇️ Download Formatted Excel Report",
+        data=excel_data,
+        file_name=f"{clean_filename}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
     )
-    sessional_enrollment_projection, sessional_collection_projection, sessional_projection_label = generate_monthly_projection(
-        df, sessional_schemes, reference_date=end_date
-    )
-    all_txn_schemes = get_all_transaction_schemes(df)
-    st.sidebar.caption(f"📋 Master scheme list: {len(all_txn_schemes)} scheme(s) → "
-                       + ", ".join(all_txn_schemes[:8])
-                       + (" ..." if len(all_txn_schemes) > 8 else ""))
-    referral_summary = pd.DataFrame()
-    referral_daily_list = []
-    referral_not_enrolled_daily_list = []
-    referral_detail = pd.DataFrame()
-    referral_diagnostics = {}
-    referral_duplicates = pd.DataFrame()
-    referral_debug = {}
-    employee_df_raw = None
-    referral_df_raw = None
-    referral_files_present = uploaded_employee is not None and uploaded_referral is not None
-    if referral_files_present:
-        employee_df_raw = read_uploaded_file(uploaded_employee)
-        referral_df_raw = read_uploaded_file(uploaded_referral)
+except Exception as e:
+    st.error(f"❌ Could not build the Excel report: {e}")
 
-        if employee_df_raw is not None and referral_df_raw is not None:
-            with st.spinner("Processing referrals (period-scoped enrollment)..."):
-                (referral_summary,
-                 referral_daily_list,
-                 referral_detail,
-                 referral_diagnostics,
-                 referral_duplicates,
-                 referral_debug,
-                 referral_not_enrolled_daily_list) = build_referral_report(
-                    filtered_df, employee_df_raw, referral_df_raw, None,
-                    start_date=start_date, end_date=end_date,
-                    master_scheme_list=all_txn_schemes,
-                )
 
-            if referral_diagnostics:
-                st.info(
-                    f"📅 **Report Period:** {referral_diagnostics.get('date_filter', 'none')}  |  "
-                    f"📊 {referral_diagnostics.get('matched_referrals', 0)} enrolled / "
-                    f"{referral_diagnostics.get('total_referrals', 0)} total "
-                    f"(**{referral_diagnostics.get('not_enrolled', 0)}** not enrolled)"
-                    + (f" — **{referral_diagnostics.get('duplicates', 0)}** duplicate(s) flagged"
-                       if referral_diagnostics.get('duplicates') else "")
-                    + (f" — **{referral_diagnostics.get('collisions_cleared', 0)}** txn collision(s) cleared"
-                       if referral_diagnostics.get('collisions_cleared') else "")
-                )
-                if referral_diagnostics.get("scope_warning"):
-                    st.warning(f"⚠️ {referral_diagnostics['scope_warning']}")
-    if referral_files_present and referral_debug:
-        st.header("🧪 Debug — Match Analysis")
-
-        with st.expander("📊 Referral Funnel", expanded=True):
-            c1, c2, c3, c4, c5 = st.columns(5)
-            with c1:
-                st.metric("Raw referral rows", f"{referral_debug.get('referral_raw_count', 0):,}")
-            with c2:
-                st.metric("Dropped (outside period)", f"{referral_debug.get('dropped_out_of_period', 0):,}")
-            with c3:
-                st.metric("In-scope for report", f"{referral_debug.get('referral_after_date_filter', 0):,}")
-            with c4:
-                st.metric("Enrolled", f"{referral_diagnostics.get('matched_referrals', 0):,}")
-            with c5:
-                st.metric("Not Enrolled (in period)", f"{referral_diagnostics.get('not_enrolled', 0):,}")
-
-        with st.expander("🎯 Strict Match Analysis", expanded=True):
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.metric("✅ Strict match (phone+date+amount)",
-                          f"{referral_debug.get('strict_match_count', 0):,}")
-            with c2:
-                st.metric("❌ Weak match rejected (phone+date only)",
-                          f"{referral_debug.get('weak_match_rejected', 0):,}")
-            with c3:
-                st.metric("⚠️ Txn collisions cleared",
-                          f"{referral_debug.get('collisions_cleared', 0):,}")
-            with c4:
-                st.metric("🔀 Multi-scheme same day (first picked)",
-                          f"{referral_debug.get('multi_scheme_same_day', 0):,}")
-
-        with st.expander("📋 Not Enrolled Reason Breakdown"):
-            if referral_debug.get('not_enrolled_breakdown'):
-                st.dataframe(
-                    pd.DataFrame([
-                        {"Reason": k, "Count": v}
-                        for k, v in referral_debug['not_enrolled_breakdown'].items()
-                    ]),
-                    use_container_width=True, hide_index=True
-                )
-
-        with st.expander("🔍 Branch × Category Pivot (in-scope)"):
-            if not referral_detail.empty:
-                grp = referral_detail.groupby(['Branch', 'Category']).size().reset_index(name='Count')
-                pivot_dbg = grp.pivot(index='Branch', columns='Category', values='Count').fillna(0).astype(int)
-                st.dataframe(pivot_dbg, use_container_width=True)
-    st.header("📋 Formatted Report Preview")
-    if daily_schemes and not daily_summary.empty:
-        st.subheader("📅 Daily Schemes (e-Gold & e-Silver)")
-        st.dataframe(daily_summary, use_container_width=True, hide_index=True)
-        if not daily_avg_ticket.empty:
-            display_avg_ticket_comparison(daily_avg_ticket)
-        if not daily_enrollment_projection.empty or not daily_collection_projection.empty:
-            st.markdown(f"**📈 Monthly Projection — {daily_projection_label}**")
-            c5, c6 = st.columns(2)
-            with c5:
-                st.caption("Projection — first enrollments")
-                st.dataframe(daily_enrollment_projection, use_container_width=True, hide_index=True)
-            with c6:
-                st.caption("Projection — overall collection")
-                st.dataframe(daily_collection_projection, use_container_width=True, hide_index=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.dataframe(daily_enrollment, use_container_width=True, hide_index=True)
-        with c2:
-            st.dataframe(daily_collection, use_container_width=True, hide_index=True)
-        st.dataframe(daily_unique, use_container_width=True, hide_index=True)
-    if sessional_schemes and not sessional_summary.empty:
-        st.subheader("🎯 Sessional Schemes")
-        st.dataframe(sessional_summary, use_container_width=True, hide_index=True)
-        if not sessional_avg_ticket.empty:
-            display_avg_ticket_comparison(sessional_avg_ticket)
-        if not sessional_enrollment_projection.empty or not sessional_collection_projection.empty:
-            st.markdown(f"**📈 Monthly Projection — {sessional_projection_label}**")
-            c5, c6 = st.columns(2)
-            with c5:
-                st.caption("Projection — first enrollments")
-                st.dataframe(sessional_enrollment_projection, use_container_width=True, hide_index=True)
-            with c6:
-                st.caption("Projection — overall collection")
-                st.dataframe(sessional_collection_projection, use_container_width=True, hide_index=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.dataframe(sessional_enrollment, use_container_width=True, hide_index=True)
-        with c2:
-            st.dataframe(sessional_collection, use_container_width=True, hide_index=True)
-        st.dataframe(sessional_unique, use_container_width=True, hide_index=True)
-    if referral_files_present:
-        st.header("🎁 Referral Conversion Report")
-        if referral_summary.empty:
-            st.warning("⚠️ No referral data found. Check the debug panel above.")
-        else:
-            st.subheader(
-                f"🏢 Branch-wise Referral Summary — "
-                f"{start_date.strftime('%d-%m-%Y')} to {end_date.strftime('%d-%m-%Y')}"
-            )
-            display_summary = referral_summary.copy()
-            for col in display_summary.columns[1:]:
-                display_summary[col] = display_summary[col].apply(
-                    lambda x: "-" if (isinstance(x, (int, float)) and x == 0) else x
-                )
-            st.dataframe(display_summary, use_container_width=True, hide_index=True)
-
-            if referral_daily_list:
-                st.subheader("📅 Daily Referral Breakdown")
-                for date_label, day_df in referral_daily_list:
-                    st.markdown(f"**📅 REFERRAL — {date_label}**")
-                    day_display = day_df.copy()
-                    for col in day_display.columns[1:]:
-                        day_display[col] = day_display[col].apply(
-                            lambda x: "-" if (isinstance(x, (int, float)) and x == 0) else x
-                        )
-                    st.dataframe(day_display, use_container_width=True, hide_index=True)
-
-            st.markdown("---")
-            st.subheader("📋 Referral Match Details — All Rows")
-
-            dd = referral_detail.copy()
-            for col in ["Registered Date", "Joined Date", "Transaction Date"]:
-                if col in dd.columns:
-                    dd[col] = dd[col].apply(
-                        lambda x: x.strftime("%d-%m-%Y") if pd.notna(x) else ""
-                    )
-
-            fcol1, fcol2, fcol3, fcol4 = st.columns(4)
-            with fcol1:
-                status_filter = st.selectbox(
-                    "Match Status",
-                    ["All", "Enrolled Only", "Not Enrolled Only"],
-                    key="ref_detail_status_filter"
-                )
-            with fcol2:
-                branches_in_detail = sorted(dd['Branch'].dropna().unique().tolist())
-                branch_filter = st.multiselect(
-                    "Filter by Branch",
-                    options=branches_in_detail,
-                    default=[],
-                    key="ref_detail_branch_filter",
-                    help="Leave empty for ALL branches"
-                )
-            with fcol3:
-                categories_in_detail = sorted(dd['Category'].dropna().unique().tolist())
-                category_filter = st.multiselect(
-                    "Filter by Category",
-                    options=categories_in_detail,
-                    default=[],
-                    key="ref_detail_category_filter",
-                    help="Leave empty for ALL categories"
-                )
-            with fcol4:
-                search_text = st.text_input(
-                    "🔎 Search (name / phone / passbook)",
-                    key="ref_detail_search"
-                )
-
-            dd_filtered = dd.copy()
-            if status_filter == "Enrolled Only":
-                dd_filtered = dd_filtered[dd_filtered['Category'] != 'Not Enrolled']
-            elif status_filter == "Not Enrolled Only":
-                dd_filtered = dd_filtered[dd_filtered['Category'] == 'Not Enrolled']
-            if branch_filter:
-                dd_filtered = dd_filtered[dd_filtered['Branch'].isin(branch_filter)]
-            if category_filter:
-                dd_filtered = dd_filtered[dd_filtered['Category'].isin(category_filter)]
-            if search_text:
-                term = search_text.strip().lower()
-                mask = (
-                    dd_filtered['Referee Name'].astype(str).str.lower().str.contains(term, na=False) |
-                    dd_filtered['Referee Phone'].astype(str).str.lower().str.contains(term, na=False) |
-                    dd_filtered['Referrer Name'].astype(str).str.lower().str.contains(term, na=False) |
-                    dd_filtered['Passbook'].astype(str).str.lower().str.contains(term, na=False)
-                )
-                dd_filtered = dd_filtered[mask]
-
-            total_rows = len(referral_detail)
-            enrolled_rows = len(referral_detail[referral_detail['Category'] != 'Not Enrolled'])
-            not_enrolled_rows = total_rows - enrolled_rows
-            filtered_rows = len(dd_filtered)
-
-            mcol1, mcol2, mcol3, mcol4 = st.columns(4)
-            with mcol1:
-                st.metric("Total in Report", f"{total_rows:,}")
-            with mcol2:
-                st.metric("✅ Enrolled", f"{enrolled_rows:,}")
-            with mcol3:
-                st.metric("❌ Not Enrolled", f"{not_enrolled_rows:,}")
-            with mcol4:
-                st.metric("Showing (after filters)", f"{filtered_rows:,}")
-
-            dd_display = dd_filtered.drop(
-                columns=["Match Date", "Joined Date Str", "Registered Date Str", "Display Day"],
-                errors="ignore"
-            ).copy()
-
-            def highlight_rows(row):
-                if row.get('Category') == 'Not Enrolled':
-                    return ['background-color: #ffe6e6'] * len(row)
-                else:
-                    return ['background-color: #e6ffe6'] * len(row)
-
-            if len(dd_display) <= 5000:
-                styled_dd = dd_display.style.apply(highlight_rows, axis=1)
-                st.dataframe(styled_dd, use_container_width=True, height=600)
-            else:
-                st.info(f"ℹ️ Showing {len(dd_display):,} rows without highlighting for performance")
-                st.dataframe(dd_display, use_container_width=True, height=600)
-
-            csv_buffer = io.StringIO()
-            dd_display.to_csv(csv_buffer, index=False)
-            st.download_button(
-                label="📥 Download Filtered Match Details (CSV)",
-                data=csv_buffer.getvalue(),
-                file_name=f"referral_match_details_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-
-            if not_enrolled_rows > 0:
-                with st.expander(f"❌ View {not_enrolled_rows} Not Enrolled Rows (blank Joined Date, Registered in period)"):
-                    ne_df = referral_detail[referral_detail['Category'] == 'Not Enrolled'].copy()
-                    for col in ["Registered Date", "Joined Date", "Transaction Date"]:
-                        if col in ne_df.columns:
-                            ne_df[col] = ne_df[col].apply(
-                                lambda x: x.strftime("%d-%m-%Y") if pd.notna(x) else ""
-                            )
-                    ne_cols = [
-                        'Branch', 'Referee Name', 'Referee Phone',
-                        'Registered Date', 'Joined Date', 'Enrollment Amount',
-                        'Referrer Name', 'Employee Code'
-                    ]
-                    ne_cols = [c for c in ne_cols if c in ne_df.columns]
-                    st.dataframe(ne_df[ne_cols], use_container_width=True, height=500)
-
-            if not referral_duplicates.empty:
-                with st.expander("🔴 View Duplicate Records"):
-                    st.dataframe(referral_duplicates, use_container_width=True, hide_index=True)
-    else:
-        st.info("💡 Upload Employee + Referral files to see the Referral Report.")
-    st.header("📥 Download Formatted Report")
-    clean_filename = generate_clean_filename(start_date, end_date)
-    st.info(f"📁 **Report will be saved as:** `{clean_filename}.xlsx`")
-    report_title = uploaded_file.name.rsplit(".", 1)[0] or "Scheme Enrollment & Collection Report"
-    daily_data = {
-        "summary": daily_summary if daily_summary is not None and not daily_summary.empty else pd.DataFrame(),
-        "enrollment": daily_enrollment if daily_enrollment is not None and not daily_enrollment.empty else pd.DataFrame(),
-        "collection": daily_collection if daily_collection is not None and not daily_collection.empty else pd.DataFrame(),
-        "unique": daily_unique if daily_unique is not None and not daily_unique.empty else pd.DataFrame(),
-        "schemes": daily_schemes,
-        "date_range": (start_date.strftime("%d-%m-%Y"), end_date.strftime("%d-%m-%Y")),
-        "report_title": "eGold & eSilver Enrollment & Collection Report",
-        "sheet_name": "eGold & eSilver",
-        "enrollment_projection": daily_enrollment_projection,
-        "collection_projection": daily_collection_projection,
-        "projection_month_label": daily_projection_label,
-        "avg_ticket_data": daily_avg_ticket if daily_avg_ticket is not None and not daily_avg_ticket.empty else pd.DataFrame(),
-    }
-    sessional_data = {
-        "summary": sessional_summary if sessional_summary is not None and not sessional_summary.empty else pd.DataFrame(),
-        "enrollment": sessional_enrollment if sessional_enrollment is not None and not sessional_enrollment.empty else pd.DataFrame(),
-        "collection": sessional_collection if sessional_collection is not None and not sessional_collection.empty else pd.DataFrame(),
-        "unique": sessional_unique if sessional_unique is not None and not sessional_unique.empty else pd.DataFrame(),
-        "schemes": sessional_schemes,
-        "date_range": (start_date.strftime("%d-%m-%Y"), end_date.strftime("%d-%m-%Y")),
-        "report_title": "Sessional Scheme Enrollment & Collection Report",
-        "sheet_name": "Sessional Scheme",
-        "enrollment_projection": sessional_enrollment_projection,
-        "collection_projection": sessional_collection_projection,
-        "projection_month_label": sessional_projection_label,
-        "avg_ticket_data": sessional_avg_ticket if sessional_avg_ticket is not None and not sessional_avg_ticket.empty else pd.DataFrame(),
-    }
-    try:
-        with st.spinner("Building the formatted Excel workbook..."):
-            excel_data = create_formatted_excel(
-                daily_data,
-                sessional_data,
-                (start_date.strftime("%d-%m-%Y"), end_date.strftime("%d-%m-%Y")),
-                report_title,
-                referral_summary=referral_summary,
-                referral_daily=referral_daily_list,
-                referral_detail=referral_detail,
-                referral_duplicates=referral_duplicates,
-                referral_not_enrolled_daily=referral_not_enrolled_daily_list,
-            )
-        st.download_button(
-            label="⬇️ Download Formatted Excel Report",
-            data=excel_data,
-            file_name=f"{clean_filename}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-    except Exception as e:
-        st.error(f"❌ Could not build the Excel report: {e}")
+# ============================================================
+# END
+# ============================================================
