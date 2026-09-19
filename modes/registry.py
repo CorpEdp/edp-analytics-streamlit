@@ -141,7 +141,7 @@ MODE_REGISTRY = [
         "id": "rate_wise_customer_trackers",
         "name": "Rate Wise Customer Trackers",
         "description": "Legacy Streamlit mode converted from App-RateWiseCustomerTrackers.py",
-        "category": "Customer",
+        "category": "App",
         "module": "modes.rate_wise_customer_trackers",
         "source": "modules/AppRateWiseCustomerTrackers.py",
     },
