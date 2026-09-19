@@ -1,1868 +1,2727 @@
-"""
-Auto-converted from: App-BranchEmployeeWiseReferralReport.py
-Review this file before using — the converter does a best-effort wrap;
-double-check indentation around any unusual control flow (loops, if/else
-blocks that span large sections, etc.).
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
-import calendar
-import re
-from io import BytesIO
 from datetime import datetime
+import io
+import re
 from collections import defaultdict
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
-import warnings
-def normalize_branch(branch_name):
-    if pd.isna(branch_name):
-        return "Skip"
-    key = str(branch_name).strip().lower()
-    key = " ".join(key.split())
-    if not key:
-        return "Skip"
-    if key in BRANCH_MAPPING:
-        return BRANCH_MAPPING[key]
-    for k, v in BRANCH_MAPPING.items():
-        k_norm = " ".join(k.split())
-        if k_norm and k_norm in key:
-            return v
-    return "Skip"
+import plotly.express as px
+import plotly.graph_objects as go
+
+# Increase pandas Styler max elements limit to handle large dataframes
+pd.set_option("styler.render.max_elements", 500000)
+
+REQUIRED_COLUMNS = {
+    "Employees Report": ["Referral Code", "Employee Code", "Branch", "Employee Type"],
+    "Referrals Report": [
+        "Referee Name", "Referee Phone", "Enrollment Amount", "Status",
+        "Referrer Name", "Referral Code", "Referrer Phone"
+    ],
+    "Transactions Report": [
+        "Customer Phone Number", "Date", "Saved Amount", "Installment number"
+    ],
+    "BSS Joining Report (optional)": ["Mobileno", "Date", "Online", "Scheme", "Doc No"],
+}
+
+
+# ---------------------------------------------------------------------------
+# Custom branch ordering
+# ---------------------------------------------------------------------------
+FIXED_BRANCH_GROUPS = [
+    ["Madurai"],
+    ["Marthandam"],
+    ["Salem"],
+    ["Tirunelveli"],
+    ["Trichy", "Tiruchirappalli", "Tiruchirapalli"],
+    ["Rajapalayam", "Rajapalaiyam", "Rajapalayem"],
+    ["Dindigul"],
+    ["Noida"],
+    ["Virudhunagar", "Virudunagar"],
+    ["Thanjavur"],
+]
+TELECALLER_KEYWORDS = ["telecaller", "tele caller", "tellecaller"]
+
+
 def _is_telecaller_branch(branch):
-    return any(k in str(branch).lower() for k in TELECALLER_KEYWORDS)
+    branch_l = str(branch).lower()
+    return any(k in branch_l for k in TELECALLER_KEYWORDS)
+
+
 def _fixed_rank(branch):
     branch_l = str(branch).lower()
     for i, aliases in enumerate(FIXED_BRANCH_GROUPS):
-        if any(alias in branch_l for alias in aliases):
+        if any(alias.lower() in branch_l for alias in aliases):
             return i
     return None
+
+
 def build_branch_order(all_branches):
     all_branches = sorted(set(b for b in all_branches if pd.notna(b) and str(b).strip() != ''))
-    telecaller = sorted([b for b in all_branches if _is_telecaller_branch(b)])
+
+    telecaller_branches = sorted([b for b in all_branches if _is_telecaller_branch(b)])
     remaining = [b for b in all_branches if not _is_telecaller_branch(b)]
+
     fixed_present = [b for b in remaining if _fixed_rank(b) is not None]
     fixed_present.sort(key=_fixed_rank)
     new_branches = sorted([b for b in remaining if _fixed_rank(b) is None])
-    return fixed_present + new_branches + telecaller
+
+    return fixed_present + new_branches + telecaller_branches
+
+
 def sort_branches_df(df, ordered_branches, branch_col='Branch'):
-    if branch_col not in df.columns or len(df) == 0:
-        return df
     order_map = {b: i for i, b in enumerate(ordered_branches)}
     df = df.copy()
     df['_branch_sort_key'] = df[branch_col].map(lambda b: order_map.get(b, len(ordered_branches)))
     df = df.sort_values('_branch_sort_key', kind='stable').drop(columns=['_branch_sort_key'])
     return df
-def clean_phone_scalar(value):
-    """Normalize phone: keep last 10 digits, strip country codes."""
-    if pd.isna(value):
-        return ""
-    s = str(value).strip()
-    if s.endswith(".0"):
-        s = s[:-2]
-    digits = re.sub(r'\D', '', s)
-    if not digits:
-        return ""
-    if len(digits) == 12 and digits.startswith("91"):
-        digits = digits[2:]
-    elif len(digits) == 11 and digits.startswith("0"):
-        digits = digits[1:]
-    if len(digits) > 10:
-        digits = digits[-10:]
-    return digits
-def clean_phone(series):
-    return series.apply(clean_phone_scalar)
-def _parse_date_flexible(date_val):
-    """Parse date into normalized pd.Timestamp (no time component)."""
-    if pd.isna(date_val) or date_val == '':
-        return pd.NaT
-    try:
-        if isinstance(date_val, (datetime, pd.Timestamp)):
-            return pd.Timestamp(date_val).normalize()
-        date_str = str(date_val).strip()
-        if date_str == '':
-            return pd.NaT
-        formats = [
-            '%d-%m-%Y', '%d/%m/%Y', '%Y-%m-%d',
-            '%m-%d-%Y', '%m/%d/%Y',
-            '%d-%m-%y', '%d/%m/%y',
-            '%b %d, %Y', '%d %b %Y'
-        ]
-        for fmt in formats:
-            try:
-                return pd.Timestamp(datetime.strptime(date_str, fmt)).normalize()
-            except Exception:
-                continue
-        return pd.to_datetime(date_str).normalize()
-    except Exception:
-        return pd.NaT
-def clean_amount_scalar(value):
-    """Convert currency string to float."""
-    if pd.isna(value):
-        return np.nan
-    s = re.sub(r'[^\d\.]', '', str(value))
-    if s == '' or s == '.':
-        return np.nan
-    try:
-        return float(s)
-    except Exception:
-        return np.nan
-def find_column(df, candidates):
-    lookup = {str(c).strip().lower(): c for c in df.columns}
-    for cand in candidates:
-        key = cand.strip().lower()
-        if key in lookup:
-            return lookup[key]
-    return None
-def clean_columns(df):
-    df.columns = (df.columns.astype(str).str.strip().str.replace(r"\s+", " ", regex=True))
-    return df
-def clean_amount(series):
-    return pd.to_numeric(
-        series.astype(str)
-        .str.replace(",", "", regex=False)
-        .str.replace("₹", "", regex=False)
-        .str.replace("Rs.", "", regex=False)
-        .str.replace("Rs", "", regex=False)
-        .str.strip(),
-        errors="coerce"
-    ).fillna(0)
-def clean_text(series):
-    return (series.astype(str).str.strip().replace(["nan", "None", "NaN", ""], np.nan))
-def round_value(value):
-    if pd.isna(value):
-        return 0
-    return round(value)
-def round_df(df, exclude_columns=None):
-    result = df.copy()
-    exclude_columns = exclude_columns or []
-    for col in result.columns:
-        if col in exclude_columns:
-            continue
-        if pd.api.types.is_numeric_dtype(result[col]):
-            result[col] = result[col].apply(round_value)
-    return result
-def classify_scheme_type(scheme_name):
-    if pd.isna(scheme_name):
-        return "sessional"
-    text = str(scheme_name).lower().strip()
-    for key in DAILY_SCHEME_KEYS:
-        if key in text:
-            return "daily"
-    return "sessional"
-def get_scheme_list(df, scheme_type="all"):
-    if "Scheme" not in df.columns:
-        return []
-    schemes = sorted(df["Scheme"].dropna().unique().tolist())
-    if scheme_type == "daily":
-        return [s for s in schemes if classify_scheme_type(s) == "daily"]
-    elif scheme_type == "sessional":
-        return [s for s in schemes if classify_scheme_type(s) == "sessional"]
-    return schemes
-def apply_cell_style(cell, fill=None, font=None, alignment=None, number_format=None, border=None):
-    if fill:
-        cell.fill = fill
-    if font:
-        cell.font = font
-    if alignment:
-        cell.alignment = alignment
-    if number_format:
-        cell.number_format = number_format
-    if border:
-        cell.border = border
-def write_section_header(worksheet, row, title, max_column, color="4472C4"):
-    worksheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=max_column)
-    cell = worksheet.cell(row=row, column=1)
-    cell.value = title
-    cell.font = Font(size=14, bold=True, color="FFFFFF")
-    cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-    cell.alignment = Alignment(horizontal="center", vertical="center")
-    worksheet.row_dimensions[row].height = 25
-def format_dataframe_section(worksheet, dataframe, start_row, header_rows=1, total_identifier=None):
-    if dataframe.empty:
-        return
-    thin_border = Border(
-        left=Side(style="thin", color="D9D9D9"),
-        right=Side(style="thin", color="D9D9D9"),
-        top=Side(style="thin", color="D9D9D9"),
-        bottom=Side(style="thin", color="D9D9D9")
-    )
-    total_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-    header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
-    for col_idx, column_name in enumerate(dataframe.columns, start=1):
-        cell = worksheet.cell(row=start_row, column=col_idx)
-        cell.value = column_name
-        apply_cell_style(cell, fill=header_fill, font=Font(bold=True),
-                         alignment=Alignment(horizontal="center", vertical="center", wrap_text=True),
-                         border=thin_border)
-    for row_idx in range(start_row + 1, start_row + 1 + len(dataframe)):
-        is_total = False
-        if total_identifier is not None:
-            fv = worksheet.cell(row=row_idx, column=1).value
-            if fv is not None and total_identifier in str(fv):
-                is_total = True
-        for col_idx in range(1, len(dataframe.columns) + 1):
-            cell = worksheet.cell(row=row_idx, column=col_idx)
-            fill = total_fill if is_total else None
-            font = Font(bold=True) if is_total else None
-            number_format = '#,##0' if col_idx > 1 else None
-            apply_cell_style(cell, fill=fill, font=font,
-                             alignment=Alignment(horizontal="center", vertical="center"),
-                             number_format=number_format, border=thin_border)
-def write_projection_section(worksheet, start_row, enrollment_df, collection_df, month_label, thin_border):
-    if enrollment_df.empty and collection_df.empty:
-        return
-    header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
-    sub_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
-    title = "📈 MONTHLY PROJECTION"
-    if month_label:
-        title = f"{title} - {month_label}"
-    write_section_header(worksheet, start_row, title, 7, "ED7D31")
-    sub_row = start_row + 1
-    header_row = start_row + 2
-    data_start_row = start_row + 3
-    worksheet.merge_cells(start_row=sub_row, start_column=1, end_row=sub_row, end_column=3)
-    c = worksheet.cell(row=sub_row, column=1)
-    c.value = "Projection of this month's first enrollments"
-    c.font = Font(bold=True, italic=True)
-    c.alignment = Alignment(horizontal="center", vertical="center")
-    c.fill = sub_fill
-    worksheet.merge_cells(start_row=sub_row, start_column=5, end_row=sub_row, end_column=7)
-    c = worksheet.cell(row=sub_row, column=5)
-    c.value = "Projection of this month's overall collection"
-    c.font = Font(bold=True, italic=True)
-    c.alignment = Alignment(horizontal="center", vertical="center")
-    c.fill = sub_fill
-    for offset, label in enumerate(["Scheme", "Projected Count", "Projected Amount"]):
-        for base_col in (1, 5):
-            cell = worksheet.cell(row=header_row, column=base_col + offset)
-            cell.value = label
-            cell.font = Font(bold=True)
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.border = thin_border
-    row_count = max(len(enrollment_df), len(collection_df))
-    for r in range(row_count):
-        row_idx = data_start_row + r
-        if r < len(enrollment_df):
-            erow = enrollment_df.iloc[r]
-            worksheet.cell(row=row_idx, column=1).value = erow["Scheme"]
-            worksheet.cell(row=row_idx, column=2).value = erow["Projected Count"]
-            worksheet.cell(row=row_idx, column=3).value = erow["Projected Amount"]
-        if r < len(collection_df):
-            crow = collection_df.iloc[r]
-            worksheet.cell(row=row_idx, column=5).value = crow["Scheme"]
-            worksheet.cell(row=row_idx, column=6).value = crow["Projected Count"]
-            worksheet.cell(row=row_idx, column=7).value = crow["Projected Amount"]
-        for col_idx in (1, 2, 3, 5, 6, 7):
-            cell = worksheet.cell(row=row_idx, column=col_idx)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = thin_border
-            if col_idx in (2, 3, 6, 7):
-                cell.number_format = '#,##0'
-def write_avg_ticket_section(worksheet, start_row, avg_ticket_data, thin_border):
-    if avg_ticket_data.empty:
-        return
-    header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
-    write_section_header(worksheet, start_row, "📊 AVERAGE TICKET SIZE COMPARISON",
-                         len(avg_ticket_data.columns), "70AD47")
-    header_row = start_row + 1
-    data_start_row = start_row + 2
-    for col_idx, col_name in enumerate(avg_ticket_data.columns, start=1):
-        cell = worksheet.cell(row=header_row, column=col_idx)
-        cell.value = col_name
-        cell.font = Font(bold=True)
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = thin_border
-    for r, row in enumerate(avg_ticket_data.values):
-        row_idx = data_start_row + r
-        is_total = "Total" in str(row[0]) if len(row) > 0 else False
-        for col_idx, value in enumerate(row, start=1):
-            cell = worksheet.cell(row=row_idx, column=col_idx)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = thin_border
-            col_name = avg_ticket_data.columns[col_idx - 1]
-            if col_name == "Scheme":
-                cell.value = value
-            elif col_name in ["First Enrollment Count", "Collection Count"]:
-                if isinstance(value, (int, float)):
-                    cell.value = value
-                    cell.number_format = '#,##0'
+
+
+def reindex_all_branches(df, ordered_branches, branch_col='Branch'):
+    if branch_col not in df.columns or len(df) == 0:
+        if branch_col not in df.columns:
+            return df
+
+    existing = set(df[branch_col].tolist())
+    missing = [b for b in ordered_branches if b not in existing]
+
+    if missing:
+        placeholder_rows = []
+        for b in missing:
+            row = {}
+            for col in df.columns:
+                if col == branch_col:
+                    row[col] = b
+                elif pd.api.types.is_numeric_dtype(df[col]):
+                    row[col] = 0
                 else:
-                    cell.value = value
-            elif col_name in ["First Enrollment Amount", "Collection Amount",
-                              "First Enrollment Avg Ticket", "Collection Avg Ticket", "Difference"]:
-                if isinstance(value, (int, float)):
-                    cell.value = value
-                    cell.number_format = '#,##0'
-                else:
-                    cell.value = value
-            elif col_name == "% Change":
-                if isinstance(value, (int, float)):
-                    cell.value = value
-                    cell.number_format = '0.00%'
-                else:
-                    cell.value = value
-            if is_total:
-                cell.font = Font(bold=True)
-                cell.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-def write_sheet(workbook, sheet_data):
-    worksheet = workbook.create_sheet(sheet_data["sheet_name"])
-    summary_df = sheet_data["summary"]
-    enrollment_df = sheet_data["enrollment"]
-    collection_df = sheet_data["collection"]
-    unique_df = sheet_data["unique"]
-    date_range = sheet_data["date_range"]
-    report_title = sheet_data["report_title"]
-    avg_ticket_data = sheet_data.get("avg_ticket_data", pd.DataFrame())
+                    row[col] = ''
+            placeholder_rows.append(row)
+        df = pd.concat([df, pd.DataFrame(placeholder_rows)], ignore_index=True)
 
-    title_color = "203764"
-    section_color = "4472C4"
-    scheme_color = "5B9BD5"
-    total_color = "C00000"
-    light_blue = "D9E1F2"
-    gold_color = "FFC000"
+    return sort_branches_df(df, ordered_branches, branch_col)
 
-    thin_border = Border(
-        left=Side(style="thin", color="D9D9D9"),
-        right=Side(style="thin", color="D9D9D9"),
-        top=Side(style="thin", color="D9D9D9"),
-        bottom=Side(style="thin", color="D9D9D9")
-    )
 
-    max_cols = max(
-        len(summary_df.columns) if not summary_df.empty else 1,
-        len(enrollment_df.columns) if not enrollment_df.empty else 1,
-        len(collection_df.columns) if not collection_df.empty else 1,
-        len(unique_df.columns) if not unique_df.empty else 1,
-        len(avg_ticket_data.columns) if not avg_ticket_data.empty else 1,
-        8
-    )
+# ---------------------------------------------------------------------------
+# Core report generation logic
+# ---------------------------------------------------------------------------
+class ReportGenerator:
+    def __init__(self, employees_df, referrals_df, transactions_df, bss_df=None):
+        self.employees_df = employees_df
+        self.referrals_df = referrals_df
+        self.transactions_df = transactions_df
+        self.bss_df = bss_df
+        self.duplicate_indices = set()
+        self.duplicate_details = []
 
-    worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_cols)
-    tc = worksheet.cell(row=1, column=1)
-    tc.value = report_title
-    tc.font = Font(size=16, bold=True, color="FFFFFF")
-    tc.fill = PatternFill(start_color=title_color, end_color=title_color, fill_type="solid")
-    tc.alignment = Alignment(horizontal="center", vertical="center")
-    worksheet.row_dimensions[1].height = 30
+    def clean_phone_number(self, phone):
+        if pd.isna(phone):
+            return ""
+        phone_str = str(phone).strip()
+        phone_digits = re.sub(r'\D', '', phone_str)
+        if phone_digits.startswith('91') and len(phone_digits) == 12:
+            phone_digits = phone_digits[2:]
+        elif phone_digits.startswith('0') and len(phone_digits) == 11:
+            phone_digits = phone_digits[1:]
+        return phone_digits
 
-    worksheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=max_cols)
-    dc = worksheet.cell(row=2, column=1)
-    dc.value = f"Report Period: {date_range[0]} to {date_range[1]}"
-    dc.font = Font(size=12, bold=True)
-    dc.alignment = Alignment(horizontal="center", vertical="center")
+    def clean_currency_amount(self, amount):
+        if pd.isna(amount):
+            return np.nan
+        amount_str = str(amount).strip()
+        amount_str = re.sub(r'[^\d\.]', '', amount_str)
+        try:
+            return float(amount_str)
+        except Exception:
+            return np.nan
 
-    summary_section_row = 4
-    write_section_header(worksheet, summary_section_row, "📊 SCHEME SUMMARY",
-                         len(summary_df.columns) if not summary_df.empty else max_cols, section_color)
-    summary_header_row = summary_section_row + 1
-    if not summary_df.empty:
-        for col_idx, col_name in enumerate(summary_df.columns, start=1):
-            worksheet.cell(row=summary_header_row, column=col_idx).value = col_name
-        for row_idx, row in enumerate(summary_df.values, start=summary_header_row + 1):
-            for col_idx, value in enumerate(row, start=1):
-                worksheet.cell(row=row_idx, column=col_idx).value = value
-    format_dataframe_section(worksheet, summary_df, summary_header_row, total_identifier="Grand Total")
-
-    avg_ticket_section_row = summary_header_row + len(summary_df) + 3
-    if not avg_ticket_data.empty:
-        write_avg_ticket_section(worksheet, avg_ticket_section_row, avg_ticket_data, thin_border)
-        avg_ticket_last_row = avg_ticket_section_row + 2 + len(avg_ticket_data) + 1
-    else:
-        avg_ticket_last_row = summary_header_row + len(summary_df)
-
-    enrollment_projection_df = sheet_data.get("enrollment_projection", pd.DataFrame())
-    collection_projection_df = sheet_data.get("collection_projection", pd.DataFrame())
-    projection_month_label = sheet_data.get("projection_month_label", "")
-    has_projection = not enrollment_projection_df.empty or not collection_projection_df.empty
-    projection_section_row = avg_ticket_last_row + 3
-    if has_projection:
-        write_projection_section(worksheet, projection_section_row,
-                                 enrollment_projection_df, collection_projection_df,
-                                 projection_month_label, thin_border)
-        prc = max(len(enrollment_projection_df), len(collection_projection_df))
-        projection_last_row = projection_section_row + 2 + prc
-    else:
-        projection_last_row = avg_ticket_last_row
-
-    enrollment_section_row = projection_last_row + 3
-    write_section_header(worksheet, enrollment_section_row, "📅 DAY-WISE NEW ENROLLMENT",
-                         len(enrollment_df.columns) if not enrollment_df.empty else max_cols, section_color)
-    enrollment_header_row = enrollment_section_row + 1
-    if not enrollment_df.empty:
-        for col_idx, col_name in enumerate(enrollment_df.columns, start=1):
-            worksheet.cell(row=enrollment_header_row, column=col_idx).value = col_name
-        for row_idx, row in enumerate(enrollment_df.values, start=enrollment_header_row + 1):
-            for col_idx, value in enumerate(row, start=1):
-                worksheet.cell(row=row_idx, column=col_idx).value = value
-    for col_idx, col_name in enumerate(enrollment_df.columns if not enrollment_df.empty else [], start=1):
-        cell = worksheet.cell(row=enrollment_header_row, column=col_idx)
-        if str(col_name).startswith("Total"):
-            fill_color, text_color = total_color, "FFFFFF"
-        elif "Rate" in str(col_name):
-            fill_color, text_color = scheme_color, "FFFFFF"
-        else:
-            fill_color, text_color = light_blue, "000000"
-        cell.fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
-        cell.font = Font(bold=True, color=text_color)
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = thin_border
-    for row_idx in range(enrollment_header_row + 1, enrollment_header_row + 1 + len(enrollment_df)):
-        is_total_row = "Days" in str(worksheet.cell(row=row_idx, column=1).value or "")
-        for col_idx in range(1, (len(enrollment_df.columns) + 1) if not enrollment_df.empty else 1):
-            cell = worksheet.cell(row=row_idx, column=col_idx)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = thin_border
-            if col_idx > 1:
-                cell.number_format = '#,##0'
-            if is_total_row:
-                cell.fill = PatternFill(start_color=gold_color, end_color=gold_color, fill_type="solid")
-                cell.font = Font(bold=True)
-
-    collection_section_row = enrollment_header_row + len(enrollment_df) + 3
-    write_section_header(worksheet, collection_section_row, "💰 DAY-WISE COLLECTION",
-                         len(collection_df.columns) if not collection_df.empty else max_cols, section_color)
-    collection_header_row = collection_section_row + 1
-    if not collection_df.empty:
-        for col_idx, col_name in enumerate(collection_df.columns, start=1):
-            worksheet.cell(row=collection_header_row, column=col_idx).value = col_name
-        for row_idx, row in enumerate(collection_df.values, start=collection_header_row + 1):
-            for col_idx, value in enumerate(row, start=1):
-                worksheet.cell(row=row_idx, column=col_idx).value = value
-    for col_idx, col_name in enumerate(collection_df.columns if not collection_df.empty else [], start=1):
-        cell = worksheet.cell(row=collection_header_row, column=col_idx)
-        if str(col_name).startswith("Total"):
-            fill_color, text_color = total_color, "FFFFFF"
-        else:
-            fill_color, text_color = light_blue, "000000"
-        cell.fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
-        cell.font = Font(bold=True, color=text_color)
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = thin_border
-    for row_idx in range(collection_header_row + 1, collection_header_row + 1 + len(collection_df)):
-        is_total_row = "Days" in str(worksheet.cell(row=row_idx, column=1).value or "")
-        for col_idx in range(1, (len(collection_df.columns) + 1) if not collection_df.empty else 1):
-            cell = worksheet.cell(row=row_idx, column=col_idx)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = thin_border
-            if col_idx > 1:
-                cell.number_format = '#,##0'
-            if is_total_row:
-                cell.fill = PatternFill(start_color=gold_color, end_color=gold_color, fill_type="solid")
-                cell.font = Font(bold=True)
-
-    unique_section_row = collection_header_row + len(collection_df) + 3
-    write_section_header(worksheet, unique_section_row, "👥 UNIQUE ENROLLMENT",
-                         len(unique_df.columns) if not unique_df.empty else max_cols, section_color)
-    unique_header_row = unique_section_row + 1
-    if not unique_df.empty:
-        for col_idx, col_name in enumerate(unique_df.columns, start=1):
-            worksheet.cell(row=unique_header_row, column=col_idx).value = col_name
-        for row_idx, row in enumerate(unique_df.values, start=unique_header_row + 1):
-            for col_idx, value in enumerate(row, start=1):
-                worksheet.cell(row=row_idx, column=col_idx).value = value
-    for col_idx, col_name in enumerate(unique_df.columns if not unique_df.empty else [], start=1):
-        cell = worksheet.cell(row=unique_header_row, column=col_idx)
-        if str(col_name) == "Grand Total":
-            fill_color, text_color = total_color, "FFFFFF"
-        else:
-            fill_color, text_color = light_blue, "000000"
-        cell.fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
-        cell.font = Font(bold=True, color=text_color)
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = thin_border
-    for row_idx in range(unique_header_row + 1, unique_header_row + 1 + len(unique_df)):
-        is_total_row = "Days" in str(worksheet.cell(row=row_idx, column=1).value or "")
-        for col_idx in range(1, (len(unique_df.columns) + 1) if not unique_df.empty else 1):
-            cell = worksheet.cell(row=row_idx, column=col_idx)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = thin_border
-            if col_idx > 1:
-                cell.number_format = '#,##0'
-            if is_total_row:
-                cell.fill = PatternFill(start_color=gold_color, end_color=gold_color, fill_type="solid")
-                cell.font = Font(bold=True)
-
-    for column_cells in worksheet.columns:
-        max_length = 0
-        column_letter = get_column_letter(column_cells[0].column)
-        for cell in column_cells:
-            if cell.value is not None:
+    def parse_date_flexible(self, date_val):
+        if pd.isna(date_val):
+            return np.nan
+        try:
+            if isinstance(date_val, (datetime, pd.Timestamp)):
+                return date_val.date()
+            date_str = str(date_val).strip()
+            formats = [
+                '%d-%m-%Y', '%d/%m/%Y', '%Y-%m-%d',
+                '%m-%d-%Y', '%m/%d/%Y', '%d-%m-%y',
+                '%d/%m/%y', '%b %d, %Y', '%d %b %Y'
+            ]
+            for fmt in formats:
                 try:
-                    max_length = max(max_length, len(str(cell.value)))
+                    return datetime.strptime(date_str, fmt).date()
                 except Exception:
-                    pass
-        worksheet.column_dimensions[column_letter].width = min(max(max_length + 2, 10), 25)
+                    continue
+            return pd.to_datetime(date_str).date()
+        except Exception:
+            return np.nan
 
-    worksheet.column_dimensions["A"].width = 16
-    worksheet.freeze_panes = "A5"
-    worksheet.sheet_view.showGridLines = False
-    worksheet.page_setup.orientation = "landscape"
-    worksheet.page_setup.fitToWidth = 1
-    worksheet.page_setup.fitToHeight = 0
-    worksheet.sheet_properties.pageSetUpPr.fitToPage = True
-def _fmt_cell(val):
-    if val is None:
-        return "-"
-    if isinstance(val, float) and pd.isna(val):
-        return "-"
-    if isinstance(val, (int, np.integer)):
-        return val if val != 0 else "-"
-    if isinstance(val, (float, np.floating)):
-        if val == 0:
-            return "-"
-        if float(val).is_integer():
-            return int(val)
-        return val
-    if isinstance(val, str) and val.strip() == "":
-        return "-"
-    return val
-def read_uploaded_file(uploaded):
-    if uploaded is None:
-        return None
-    try:
-        if uploaded.name.lower().endswith(".csv"):
-            return pd.read_csv(uploaded, keep_default_na=False, na_values=[])
-        return pd.read_excel(uploaded, keep_default_na=False, na_values=[])
-    except Exception as e:
-        st.error(f"Error reading {uploaded.name}: {e}")
-        return None
-def _transform_branch_pretty(branch):
-    """Convert raw branch name to 'Bhima Jewellery - <Title>' form."""
-    if pd.isna(branch) or str(branch).strip() == "":
-        return "Bhima Jewellery - Customer"
-    branch_upper = str(branch).upper().strip()
-    if branch_upper == "HEAD OFFICE":
-        return "Bhima Jewellery - Madurai"
-    elif branch_upper == "IN-TRANSIT- LOCATIONS":
-        return "Bhima Jewellery - Salem"
-    elif branch_upper == "APP SHOWROOM LOCATION":
-        return "Bhima Jewellery - Tirunelveli"
-    if "BHIMA JEWELLERY -" in branch_upper:
-        parts = str(branch).split("Bhima Jewellery -", 1)
-        if len(parts) > 1:
-            final_branch = f"Bhima Jewellery - {parts[1].strip().title()}"
+    def get_updated_date(self, row):
+        status = str(row['Status']).lower().strip() if pd.notna(row['Status']) else ""
+        if 'joined' in status or 'scheme joined' in status:
+            return self.parse_date_flexible(row.get('Joined Date', np.nan))
+        elif 'registered' in status or 'customer register' in status:
+            return self.parse_date_flexible(row.get('Registered Date', np.nan))
         else:
-            final_branch = str(branch).title()
-    elif str(branch).upper().strip().endswith("BRANCH"):
-        cleaned = re.sub(r'BRANCH$', '', str(branch), flags=re.IGNORECASE).strip()
-        final_branch = f"Bhima Jewellery - {cleaned.title()}"
-    else:
-        final_branch = f"Bhima Jewellery - {str(branch).title()}"
-    final_branch = final_branch.replace("Tiruchirappalli", "Trichy")
-    final_branch = final_branch.replace("TIRUCHIRAPPALLI", "Trichy")
-    final_branch = final_branch.replace("tiruchirappalli", "Trichy")
-    return final_branch
-def build_referral_report(transactions_df, employees_df, referrals_df, bss_df=None,
-                          start_date=None, end_date=None):
-    """
-    STRICT 3-FIELD MATCH:
-      Referral.Referee Phone   == Txn.Customer Phone Number  (cleaned, 10 digits)
-      Referral.Joined Date     == Txn.Date                   (same calendar day)
-      Referral.Enrollment Amt  == Txn.Saved Amount           (±0.01 tolerance)
-      AND Txn.Installment number == 1
+            if pd.notna(row.get('Joined Date', np.nan)):
+                return self.parse_date_flexible(row['Joined Date'])
+            else:
+                return self.parse_date_flexible(row.get('Registered Date', np.nan))
 
-    No fallbacks. No BSS. No phone-only.
-    Each matching transaction counts as one row (if multiple matches, all count).
+    def transform_branch(self, branch):
+        if pd.isna(branch) or branch == "":
+            return "Bhima Jewellery - Customer"
 
-    Returns:
-      (summary_pivot, daily_list, detail_df, diagnostics_dict, duplicates_df, debug_info)
-    """
-    empty = pd.DataFrame()
-    diagnostics = {
-        "total_referrals": 0, "matched_referrals": 0, "not_enrolled": 0,
-        "duplicates": 0,
-    }
-    debug_info = {
-        "referral_raw_count": 0,
-        "referral_after_date_filter": 0,
-        "referral_after_phone_filter": 0,
-        "referrals_in_scope": 0,
-        "txn_f1_count": 0,
-        "txn_unique_phones": 0,
-        "status_distribution": {},
-        "referral_phone_sample": [],
-        "txn_phone_sample": [],
-        "phone_overlap": 0,
-        "scheme_name_variants": [],
-        "not_enrolled_breakdown": {},
-    }
+        branch_upper = str(branch).upper().strip()
 
-    if employees_df is None or referrals_df is None:
-        return empty, [], empty, diagnostics, empty, debug_info
-    if employees_df.empty or referrals_df.empty:
-        return empty, [], empty, diagnostics, empty, debug_info
+        if branch_upper == "HEAD OFFICE":
+            return "Bhima Jewellery - Madurai"
+        elif branch_upper == "IN-TRANSIT- LOCATIONS":
+            return "Bhima Jewellery - Salem"
+        elif branch_upper == "APP SHOWROOM LOCATION":
+            return "Bhima Jewellery - Tirunelveli"
 
-    emp = clean_columns(employees_df.copy())
-    ref = clean_columns(referrals_df.copy())
-    txn = transactions_df.copy()
+        if "BHIMA JEWELLERY -" in branch_upper:
+            parts = str(branch).split("Bhima Jewellery -", 1)
+            if len(parts) > 1:
+                suffix = parts[1].strip().title()
+                final_branch = f"Bhima Jewellery - {suffix}"
+            else:
+                final_branch = str(branch).title()
+        elif str(branch).upper().strip().endswith("BRANCH"):
+            cleaned = re.sub(r'BRANCH$', '', str(branch), flags=re.IGNORECASE).strip()
+            cleaned = cleaned.title()
+            final_branch = f"Bhima Jewellery - {cleaned}"
+        else:
+            branch_proper = str(branch).title()
+            final_branch = f"Bhima Jewellery - {branch_proper}"
 
-    debug_info["referral_raw_count"] = len(ref)
+        final_branch = final_branch.replace("Tiruchirappalli", "Trichy")
+        final_branch = final_branch.replace("TIRUCHIRAPPALLI", "Trichy")
+        final_branch = final_branch.replace("tiruchirappalli", "Trichy")
 
-    # --- Employee columns ---
-    emp_ref_code_col = find_column(emp, ["Referral Code", "Referal Code", "Ref Code", "RefCode"])
-    emp_branch_col = find_column(emp, ["Branch", "Branch Name", "Showroom", "Location"])
-    emp_type_col = find_column(emp, ["Employee Type", "Emp Type", "Category"])
-    emp_code_col = find_column(emp, ["Employee Code", "Emp Code"])
+        if " - " in final_branch:
+            prefix, suffix = final_branch.split(" - ", 1)
+            suffix = suffix.title()
+            final_branch = f"{prefix} - {suffix}"
+        else:
+            final_branch = final_branch.title()
 
-    if emp_ref_code_col is None or emp_branch_col is None:
-        st.warning("⚠️ Employee file needs 'Referral Code' and 'Branch' columns.")
-        return empty, [], empty, diagnostics, empty, debug_info
+        return final_branch
 
-    # --- Referral columns ---
-    ref_code_col = find_column(ref, ["Referral Code", "Referal Code", "Ref Code", "RefCode"])
-    ref_phone_col = find_column(ref, ["Referee Phone", "Referee Mobile", "Referee Contact",
-                                       "Referee Phone Number", "Mobile", "Phone",
-                                       "Phone Number", "Mobile Number"])
-    referee_name_col = find_column(ref, ["Referee Name", "Referee", "Customer Name"])
-    ref_amount_col = find_column(ref, ["Enrollment Amount", "Enroll Amount", "Amount"])
-    ref_status_col = find_column(ref, ["Status"])
-    referrer_name_col = find_column(ref, ["Referrer Name", "Referer Name"])
-    referrer_phone_col = find_column(ref, ["Referrer Phone", "Referer Phone"])
-    reg_date_col = find_column(ref, ["Registered Date", "Registration Date", "Register Date"])
-    join_date_col = find_column(ref, ["Joined Date", "Join Date", "Joining Date"])
+    def get_branch_universe(self, extra_branches=None):
+        branches = set()
+        if 'Branch' in self.employees_df.columns:
+            branches.update(
+                self.employees_df['Branch'].apply(self.transform_branch).dropna().unique().tolist()
+            )
+        if extra_branches is not None:
+            branches.update([b for b in extra_branches if pd.notna(b) and str(b).strip() != ''])
+        return build_branch_order(branches)
 
-    if ref_code_col is None:
-        st.error("❌ Referral file needs 'Referral Code'.")
-        return empty, [], empty, diagnostics, empty, debug_info
-    if ref_phone_col is None:
-        st.error("❌ Referral file needs 'Referee Phone'.")
-        return empty, [], empty, diagnostics, empty, debug_info
-    if join_date_col is None:
-        st.error("❌ Referral file needs 'Joined Date' — this is essential for the strict match.")
-        return empty, [], empty, diagnostics, empty, debug_info
-    if ref_amount_col is None:
-        st.error("❌ Referral file needs 'Enrollment Amount' — this is essential for the strict match.")
-        return empty, [], empty, diagnostics, empty, debug_info
+    def detect_and_separate_duplicates(self, final_report):
+        if final_report is None or len(final_report) == 0:
+            return final_report, pd.DataFrame(), set(), final_report
 
-    # --- Build employee maps ---
-    ref_code_to_branch = dict(zip(emp[emp_ref_code_col].astype(str).str.strip(), emp[emp_branch_col]))
-    ref_code_to_empcode = {}
-    if emp_code_col is not None:
-        ref_code_to_empcode = dict(zip(emp[emp_ref_code_col].astype(str).str.strip(),
-                                        emp[emp_code_col].astype(str)))
-    ref_code_to_emptype = {}
-    if emp_type_col is not None:
-        ref_code_to_emptype = dict(zip(emp[emp_ref_code_col].astype(str).str.strip(),
-                                        emp[emp_type_col].astype(str)))
+        report_copy = final_report.copy()
+        report_copy['Is Duplicate'] = False
+        report_copy['Duplicate Group'] = ''
 
-    # --- Build referral frame ---
-    fr = pd.DataFrame()
-    fr['Customer Name'] = ref[referee_name_col] if referee_name_col else ""
-    fr['Customer Phone'] = ref[ref_phone_col].apply(clean_phone_scalar)
-    fr['Customer Enrollment Amount'] = ref[ref_amount_col].apply(clean_amount_scalar)
-    fr['Status'] = ref[ref_status_col].astype(str) if ref_status_col else ""
-    fr['Employee Name'] = ref[referrer_name_col] if referrer_name_col else ""
-    fr['Referral Code'] = ref[ref_code_col].astype(str).str.strip()
-    fr['Employee Phone'] = (
-        ref[referrer_phone_col].apply(clean_phone_scalar) if referrer_phone_col else ""
-    )
-    fr['Employee Code'] = fr['Referral Code'].map(ref_code_to_empcode).fillna('')
-    raw_branch = fr['Referral Code'].map(ref_code_to_branch)
-    fr['Branch'] = raw_branch.apply(_transform_branch_pretty)
-    fr['Category'] = fr['Referral Code'].map(ref_code_to_emptype).fillna('Customer')
+        has_passbook = report_copy['Scheme Passbook Number'].notna() & (report_copy['Scheme Passbook Number'] != '')
 
-    # --- STRICT: use Joined Date as the matching date ---
-    fr['Joined Date'] = ref[join_date_col].apply(_parse_date_flexible)
+        if not has_passbook.any():
+            st.info("ℹ️ No records with Scheme Passbook Number found")
+            return report_copy, pd.DataFrame(), set(), report_copy
 
-    # Registered Date (for reference only)
-    if reg_date_col:
-        fr['Registered Date'] = ref[reg_date_col].apply(_parse_date_flexible)
-    else:
-        fr['Registered Date'] = pd.NaT
-
-    # Status distribution
-    if ref_status_col:
-        status_counts = fr['Status'].value_counts().head(20).to_dict()
-        debug_info["status_distribution"] = {str(k): int(v) for k, v in status_counts.items()}
-
-    # --- Filter by Joined Date range ---
-    if start_date is not None and end_date is not None:
-        mask = pd.to_datetime(fr['Joined Date'], errors='coerce').between(
-            pd.Timestamp(start_date), pd.Timestamp(end_date)
+        report_copy['Duplicate Key'] = (
+            report_copy['Scheme Passbook Number'].astype(str) + '_' +
+            report_copy['Employee Name'].astype(str) + '_' +
+            report_copy['Employee Code'].astype(str) + '_' +
+            report_copy['Branch'].astype(str)
         )
-        fr_filtered = fr[mask].copy()
-    else:
-        fr_filtered = fr.copy()
 
-    debug_info["referral_after_date_filter"] = len(fr_filtered)
+        key_counts = report_copy[has_passbook]['Duplicate Key'].value_counts()
+        duplicate_keys = key_counts[key_counts > 1].index.tolist()
 
-    # --- Phone filter ---
-    fr_filtered = fr_filtered[fr_filtered['Customer Phone'].str.len() >= 10].copy()
-    debug_info["referral_after_phone_filter"] = len(fr_filtered)
-    debug_info["referrals_in_scope"] = len(fr_filtered)
-    debug_info["referral_phone_sample"] = fr_filtered['Customer Phone'].head(10).tolist()
+        if len(duplicate_keys) == 0:
+            st.success("✅ No duplicate records found based on Scheme Passbook Number and Employee Reference")
+            report_copy = report_copy.drop('Duplicate Key', axis=1)
+            return report_copy, pd.DataFrame(), set(), report_copy
 
-    # --- Transactions: filter to Installment #1 ---
-    if 'Installment number' in txn.columns:
-        txn['Installment number'] = pd.to_numeric(txn['Installment number'], errors='coerce')
-        txn_f1 = txn[txn['Installment number'] == 1].copy()
-    else:
-        txn_f1 = txn.copy()
+        st.warning(f"⚠️ Found {len(duplicate_keys)} duplicate groups")
 
-    txn_phone_col = find_column(txn_f1, ["Customer Phone Number", "Customer Phone", "Mobile"])
-    txn_date_col = find_column(txn_f1, ["Date"])
-    txn_amount_col = find_column(txn_f1, ["Saved Amount", "Amount"])
-    txn_scheme_col = find_column(txn_f1, ["Scheme Name", "Scheme"])
-    txn_passbook_col = find_column(txn_f1, ["Passbook number", "Passbook Number", "Doc No"])
+        group_counter = 1
+        duplicate_indices = set()
+        duplicate_details_list = []
 
-    if txn_phone_col is None or txn_date_col is None or txn_amount_col is None:
-        st.error("❌ Transactions file needs 'Customer Phone Number', 'Date', and 'Saved Amount'.")
-        return empty, [], empty, diagnostics, empty, debug_info
+        for dup_key in duplicate_keys:
+            group_records = report_copy[report_copy['Duplicate Key'] == dup_key].copy()
+            group_records = group_records.sort_values('Updated Date', ascending=True)
+            original_idx = group_records.index[0]
+            report_copy.loc[original_idx, 'Duplicate Group'] = f'GROUP_{group_counter}_ORIGINAL'
 
-    txn_f1['_phone'] = txn_f1[txn_phone_col].apply(clean_phone_scalar)
-    txn_f1['_date'] = txn_f1[txn_date_col].apply(_parse_date_flexible)
-    txn_f1['_amount'] = txn_f1[txn_amount_col].apply(clean_amount_scalar)
-    txn_f1['_scheme'] = txn_f1[txn_scheme_col].astype(str) if txn_scheme_col else ''
-    txn_f1['_passbook'] = txn_f1[txn_passbook_col].astype(str) if txn_passbook_col else ''
+            for idx in group_records.index[1:]:
+                report_copy.loc[idx, 'Is Duplicate'] = True
+                report_copy.loc[idx, 'Duplicate Group'] = f'GROUP_{group_counter}_DUPLICATE'
+                duplicate_indices.add(idx)
 
-    debug_info["txn_f1_count"] = len(txn_f1)
-    debug_info["txn_unique_phones"] = txn_f1['_phone'].nunique()
-    debug_info["txn_phone_sample"] = txn_f1['_phone'].head(10).tolist()
+            if len(group_records.index[1:]) > 0:
+                original_row = report_copy.loc[original_idx]
+                for dup_idx in group_records.index[1:]:
+                    duplicate_row = report_copy.loc[dup_idx]
+                    duplicate_details_list.append({
+                        'Group ID': f'GROUP_{group_counter}',
+                        'Scheme Passbook Number': original_row['Scheme Passbook Number'],
+                        'Original Employee Name': original_row['Employee Name'],
+                        'Original Employee Code': original_row['Employee Code'],
+                        'Original Customer Name': original_row['Customer Name'],
+                        'Original Customer Phone': original_row['Customer Phone'],
+                        'Original Updated Date': original_row['Updated Date'],
+                        'Original Enrollment Amount': original_row['Customer Enrollment Amount'],
+                        'Original Status': original_row['Status'],
+                        'Duplicate Employee Name': duplicate_row['Employee Name'],
+                        'Duplicate Employee Code': duplicate_row['Employee Code'],
+                        'Duplicate Customer Name': duplicate_row['Customer Name'],
+                        'Duplicate Customer Phone': duplicate_row['Customer Phone'],
+                        'Duplicate Updated Date': duplicate_row['Updated Date'],
+                        'Duplicate Enrollment Amount': duplicate_row['Customer Enrollment Amount'],
+                        'Duplicate Status': duplicate_row['Status'],
+                        'Branch': original_row['Branch'],
+                        'Category': original_row['Category'],
+                        'Original Row Index': original_idx,
+                        'Duplicate Row Index': dup_idx
+                    })
 
-    if txn_scheme_col:
-        scheme_variants = txn_f1['_scheme'].value_counts().head(30).to_dict()
-        debug_info["scheme_name_variants"] = {str(k): int(v) for k, v in scheme_variants.items()}
+            group_counter += 1
 
-    # --- Build lookup: phone+date → list of transaction rows ---
-    txn_by_phone_date = defaultdict(list)
-    for idx, row in txn_f1.iterrows():
-        p = row['_phone']
-        d = row['_date']
-        if not p or pd.isna(d):
-            continue
-        key = (p, d.date())
-        txn_by_phone_date[key].append({
-            'amount': row['_amount'],
-            'scheme': row['_scheme'],
-            'passbook': row['_passbook'],
-            'date': d,
-            'index': idx,
-        })
+        duplicates_df = pd.DataFrame(duplicate_details_list)
+        self.duplicate_indices = duplicate_indices
+        self.duplicate_details = duplicate_details_list
 
-    # Phone overlap for debug
-    ref_phones = set(fr_filtered['Customer Phone'].tolist())
-    txn_phones = set(txn_f1['_phone'].tolist())
-    debug_info["phone_overlap"] = len(ref_phones & txn_phones)
+        non_duplicate_report = report_copy[report_copy['Is Duplicate'] == False].copy()
+        report_copy = report_copy.drop('Duplicate Key', axis=1)
+        if 'Duplicate Key' in non_duplicate_report.columns:
+            non_duplicate_report = non_duplicate_report.drop('Duplicate Key', axis=1)
 
-    # --- STRICT MATCHING LOOP ---
-    matched_rows = []
-    not_enrolled_reasons = defaultdict(int)
+        total_duplicate_records = len(duplicate_indices)
+        total_groups = len(duplicate_keys)
 
-    for idx, row in fr_filtered.iterrows():
-        phone = row['Customer Phone']
-        joined_date = row['Joined Date']
-        enrollment_amount = row['Customer Enrollment Amount']
+        st.warning(f"⚠️ **DUPLICATES IDENTIFIED:** {total_duplicate_records} duplicate records in {total_groups} groups")
+        st.info("📊 **KEEPING ORIGINALS ONLY** for all reports except Consolidated Report")
+        st.info("📋 **DUPLICATES SHEET:** A separate 'Duplicate Records' sheet will show original vs duplicate comparison")
 
-        branch = row['Branch']
-        referrer = row['Employee Name']
-        referee = row['Customer Name']
-        emp_code = row['Employee Code']
-        category = row['Category']
-        reg_date = row['Registered Date']
+        return report_copy, duplicates_df, duplicate_indices, non_duplicate_report
 
-        # Validate required fields
-        if not phone:
-            not_enrolled_reasons['empty phone'] += 1
-            matched_rows.append({
-                "Branch": branch, "Referrer Name": referrer, "Referee Name": referee,
-                "Referee Phone": phone, "Employee Code": emp_code,
-                "Registered Date": reg_date, "Joined Date": joined_date,
-                "Transaction Date": pd.NaT, "Scheme": None, "Installment": None,
-                "Enrollment Amount": float(enrollment_amount) if pd.notna(enrollment_amount) else None,
-                "Paid Amount": None, "Passbook": "",
-                "Match Reason": "Not Enrolled (empty phone)",
-                "Category": "Not Enrolled", "Employee Category": category, "Is Duplicate": False,
+    def apply_duplicate_highlighting(self, workbook, sheet_row_numbers, sheet_name='Consolidated Report'):
+        if not sheet_row_numbers:
+            return
+
+        ws = workbook[sheet_name]
+        highlight_fill = PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")
+        max_row = ws.max_row
+
+        for excel_row in sheet_row_numbers:
+            if excel_row <= max_row:
+                for col in range(1, ws.max_column + 1):
+                    cell = ws.cell(row=excel_row, column=col)
+                    cell.fill = highlight_fill
+                    thin_border = Border(
+                        left=Side(style='thin', color='FF0000'),
+                        right=Side(style='thin', color='FF0000'),
+                        top=Side(style='thin', color='FF0000'),
+                        bottom=Side(style='thin', color='FF0000')
+                    )
+                    cell.border = thin_border
+
+        ws.insert_rows(1)
+        note_cell = ws.cell(row=1, column=1)
+        note_cell.value = "🔴 HIGHLIGHTED ROWS (PINK) ARE DUPLICATE RECORDS - Duplicate means same Scheme Passbook Number & Employee Reference"
+        note_cell.font = Font(bold=True, color="FF0000", size=12)
+        note_cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ws.max_column)
+
+    def match_with_bss_report(self, final_report):
+        if self.bss_df is None or len(self.bss_df) == 0:
+            st.warning("⚠️ BSS Joining Report not provided. Some scheme details may remain unmatched.")
+            return final_report
+
+        st.info("🔍 Attempting to match remaining records with BSS Joining Report...")
+
+        bss_clean = self.bss_df.copy()
+
+        required_bss_cols = {
+            'Mobileno': 'Customer Phone', 'Date': 'Date', 'Online': 'Online Amount',
+            'Scheme': 'Scheme Name', 'Doc No': 'Passbook Number'
+        }
+
+        missing_cols = [c for c in required_bss_cols if c not in bss_clean.columns]
+        if missing_cols:
+            st.warning(f"⚠️ BSS Joining Report missing columns: {', '.join(missing_cols)}")
+
+        if 'Mobileno' in bss_clean.columns:
+            bss_clean['Clean Phone'] = bss_clean['Mobileno'].apply(self.clean_phone_number)
+        else:
+            st.error("❌ 'Mobileno' column not found in BSS Joining Report")
+            return final_report
+
+        if 'Date' in bss_clean.columns:
+            bss_clean['Clean Date'] = bss_clean['Date'].apply(self.parse_date_flexible)
+            st.info("📊 BSS Joining Report kept in original order (newest to oldest)")
+        else:
+            st.warning("⚠️ 'Date' column not found in BSS Joining Report")
+            bss_clean['Clean Date'] = None
+
+        if 'Online' in bss_clean.columns:
+            bss_clean['Online Amount'] = bss_clean['Online'].apply(self.clean_currency_amount)
+        else:
+            st.warning("⚠️ 'Online' column not found in BSS Joining Report")
+            bss_clean['Online Amount'] = np.nan
+
+        bss_lookup = defaultdict(list)
+        for idx, row in bss_clean.iterrows():
+            phone = row['Clean Phone']
+            date = row['Clean Date']
+            amount = row['Online Amount']
+            if phone and phone != "":
+                key = phone
+                if date:
+                    key = f"{phone}_{date}"
+                bss_lookup[key].append({
+                    'amount': amount, 'scheme_name': row.get('Scheme', ''),
+                    'doc_no': row.get('Doc No', ''), 'date': date, 'index': idx
+                })
+
+        need_bss_matching = final_report[
+            (final_report['Not Enrolled'] == True) &
+            (final_report['Status'].str.lower().str.contains('joined', na=False))
+        ].copy()
+
+        st.info(f"📊 Found {len(need_bss_matching)} records that need BSS Joining Report matching")
+
+        if len(need_bss_matching) == 0:
+            st.success("✅ No records need BSS Joining Report matching")
+            return final_report
+
+        matched_count = 0
+        for idx in need_bss_matching.index:
+            row = final_report.loc[idx]
+            customer_phone = row['Customer Phone']
+            updated_date = row['Updated Date']
+            enrollment_amount = row['Customer Enrollment Amount']
+
+            if not customer_phone or customer_phone == "":
+                continue
+
+            matched = False
+
+            if pd.notna(updated_date):
+                exact_key = f"{customer_phone}_{updated_date}"
+                if exact_key in bss_lookup:
+                    for match in reversed(bss_lookup[exact_key]):
+                        if pd.notna(enrollment_amount) and pd.notna(match['amount']):
+                            if abs(match['amount'] - enrollment_amount) <= 0.01:
+                                final_report.loc[idx, 'Customer Payment'] = match['amount']
+                                final_report.loc[idx, 'Scheme Name'] = match['scheme_name']
+                                final_report.loc[idx, 'Scheme Passbook Number'] = match['doc_no']
+                                final_report.loc[idx, 'True/False'] = True
+                                final_report.loc[idx, 'Not Enrolled'] = False
+                                matched_count += 1
+                                matched = True
+                                break
+
+                    if not matched and len(bss_lookup[exact_key]) > 0:
+                        oldest_match = bss_lookup[exact_key][-1]
+                        final_report.loc[idx, 'Customer Payment'] = oldest_match['amount'] if pd.notna(oldest_match['amount']) else enrollment_amount
+                        final_report.loc[idx, 'Scheme Name'] = oldest_match['scheme_name']
+                        final_report.loc[idx, 'Scheme Passbook Number'] = oldest_match['doc_no']
+                        final_report.loc[idx, 'True/False'] = True
+                        final_report.loc[idx, 'Not Enrolled'] = False
+                        matched_count += 1
+                        matched = True
+
+            if not matched:
+                phone_key = customer_phone
+                if phone_key in bss_lookup:
+                    for match in reversed(bss_lookup[phone_key]):
+                        if pd.notna(enrollment_amount) and pd.notna(match['amount']):
+                            if abs(match['amount'] - enrollment_amount) <= 0.01:
+                                final_report.loc[idx, 'Customer Payment'] = match['amount']
+                                final_report.loc[idx, 'Scheme Name'] = match['scheme_name']
+                                final_report.loc[idx, 'Scheme Passbook Number'] = match['doc_no']
+                                final_report.loc[idx, 'True/False'] = True
+                                final_report.loc[idx, 'Not Enrolled'] = False
+                                matched_count += 1
+                                matched = True
+                                break
+
+                    if not matched and len(bss_lookup[phone_key]) > 0:
+                        oldest_match = bss_lookup[phone_key][-1]
+                        final_report.loc[idx, 'Customer Payment'] = oldest_match['amount'] if pd.notna(oldest_match['amount']) else enrollment_amount
+                        final_report.loc[idx, 'Scheme Name'] = oldest_match['scheme_name']
+                        final_report.loc[idx, 'Scheme Passbook Number'] = oldest_match['doc_no']
+                        final_report.loc[idx, 'True/False'] = True
+                        final_report.loc[idx, 'Not Enrolled'] = False
+                        matched_count += 1
+                        matched = True
+
+        st.success(f"✅ Successfully matched {matched_count} records using BSS Joining Report")
+
+        still_unmatched = final_report[
+            (final_report['Not Enrolled'] == True) &
+            (final_report['Status'].str.lower().str.contains('joined', na=False))
+        ].shape[0]
+
+        if still_unmatched > 0:
+            st.warning(f"⚠️ {still_unmatched} joined scheme records remain unmatched even after BSS Joining Report matching")
+
+        return final_report
+
+    def generate_report(self):
+        final_report = pd.DataFrame()
+
+        has_joined_date = 'Joined Date' in self.referrals_df.columns
+        has_registered_date = 'Registered Date' in self.referrals_df.columns
+
+        if has_joined_date or has_registered_date:
+            final_report['Updated Date'] = self.referrals_df.apply(self.get_updated_date, axis=1)
+            st.info("📅 Date Logic: Using 'Joined Date' for 'Scheme Joined' status and 'Registered Date' for 'Customer Register' status")
+        else:
+            st.error("❌ Either 'Joined Date' or 'Registered Date' column must exist in Referrals Report")
+            return None
+
+        if 'Referee Name' in self.referrals_df.columns:
+            final_report['Customer Name'] = self.referrals_df['Referee Name']
+        else:
+            st.error("❌ 'Referee Name' column not found in Referrals Report")
+            return None
+
+        if 'Referee Phone' in self.referrals_df.columns:
+            final_report['Customer Phone'] = self.referrals_df['Referee Phone'].apply(self.clean_phone_number)
+        else:
+            st.error("❌ 'Referee Phone' column not found in Referrals Report")
+            return None
+
+        if 'Enrollment Amount' in self.referrals_df.columns:
+            final_report['Customer Enrollment Amount'] = self.referrals_df['Enrollment Amount'].apply(self.clean_currency_amount)
+        else:
+            st.error("❌ 'Enrollment Amount' column not found in Referrals Report")
+            return None
+
+        if 'Status' in self.referrals_df.columns:
+            final_report['Status'] = self.referrals_df['Status']
+        else:
+            st.error("❌ 'Status' column not found in Referrals Report")
+            return None
+
+        if 'Referrer Name' in self.referrals_df.columns:
+            final_report['Employee Name'] = self.referrals_df['Referrer Name']
+        else:
+            st.error("❌ 'Referrer Name' column not found in Referrals Report")
+            return None
+
+        if 'Referral Code' in self.referrals_df.columns:
+            final_report['Referral Code'] = self.referrals_df['Referral Code'].astype(str)
+        else:
+            st.error("❌ 'Referral Code' column not found in Referrals Report")
+            return None
+
+        if 'Referrer Phone' in self.referrals_df.columns:
+            final_report['Employee Phone'] = self.referrals_df['Referrer Phone'].apply(self.clean_phone_number)
+        else:
+            st.error("❌ 'Referrer Phone' column not found in Referrals Report")
+            return None
+
+        if 'Referral Code' in self.employees_df.columns and 'Employee Code' in self.employees_df.columns:
+            emp_code_dict = {}
+            for idx, row in self.employees_df.iterrows():
+                referral_code = str(row['Referral Code']).strip()
+                employee_code = str(row['Employee Code']).strip() if pd.notna(row['Employee Code']) else ''
+                emp_code_dict[referral_code] = employee_code
+            final_report['Employee Code'] = final_report['Referral Code'].astype(str).map(emp_code_dict)
+            final_report['Employee Code'] = final_report['Employee Code'].fillna('')
+        else:
+            st.warning("⚠️ 'Referral Code' or 'Employee Code' missing in Employees Report")
+            final_report['Employee Code'] = ''
+
+        if 'Referral Code' in self.employees_df.columns and 'Branch' in self.employees_df.columns:
+            branch_dict = dict(zip(self.employees_df['Referral Code'].astype(str), self.employees_df['Branch']))
+            final_report['Raw Branch'] = final_report['Referral Code'].astype(str).map(branch_dict)
+            final_report['Branch'] = final_report['Raw Branch'].apply(self.transform_branch)
+            final_report.drop('Raw Branch', axis=1, inplace=True)
+            st.success("✅ Branch transformation logic applied successfully (Proper Case)")
+        else:
+            st.warning("⚠️ 'Referral Code' or 'Branch' missing in Employees Report")
+            final_report['Branch'] = "Bhima Jewellery - Customer"
+
+        if 'Referral Code' in self.employees_df.columns and 'Employee Type' in self.employees_df.columns:
+            emp_type_dict = dict(zip(self.employees_df['Referral Code'].astype(str), self.employees_df['Employee Type']))
+            final_report['Category'] = final_report['Referral Code'].astype(str).map(emp_type_dict)
+            final_report['Category'] = final_report['Category'].fillna('Customer')
+        else:
+            st.warning("⚠️ 'Referral Code' or 'Employee Type' missing in Employees Report")
+            final_report['Category'] = 'Customer'
+
+        if 'Installment number' in self.transactions_df.columns:
+            self.transactions_df['Installment number'] = pd.to_numeric(self.transactions_df['Installment number'], errors='coerce')
+            trans_filtered = self.transactions_df[self.transactions_df['Installment number'] == 1].copy()
+            st.info(f"📊 Transactions with Installment number = 1: {len(trans_filtered)} out of {len(self.transactions_df)} total transactions")
+        else:
+            st.warning("⚠️ 'Installment number' column not found, using all transactions")
+            trans_filtered = self.transactions_df.copy()
+
+        st.info("📊 Transactions kept in original Excel order (newest to oldest)")
+
+        if 'Customer Phone Number' in trans_filtered.columns:
+            trans_filtered['Clean Phone'] = trans_filtered['Customer Phone Number'].apply(self.clean_phone_number)
+        else:
+            st.error("❌ 'Customer Phone Number' column not found in Transactions Report")
+            return None
+
+        if 'Date' in trans_filtered.columns:
+            trans_filtered['Date Clean'] = trans_filtered['Date'].apply(self.parse_date_flexible)
+        else:
+            st.error("❌ 'Date' column not found in Transactions Report")
+            return None
+
+        if 'Saved Amount' in trans_filtered.columns:
+            trans_filtered['Saved Amount Clean'] = trans_filtered['Saved Amount'].apply(self.clean_currency_amount)
+        else:
+            st.warning("⚠️ 'Saved Amount' column not found in Transactions Report")
+            trans_filtered['Saved Amount Clean'] = np.nan
+
+        trans_filtered['Match Key'] = trans_filtered['Clean Phone'] + "_" + trans_filtered['Date Clean'].astype(str)
+
+        transaction_lookup = defaultdict(list)
+        for idx, row in trans_filtered.iterrows():
+            key = row['Match Key']
+            transaction_lookup[key].append({
+                'saved_amount': row['Saved Amount Clean'] if 'Saved Amount Clean' in row else np.nan,
+                'scheme_name': row.get('Scheme Name', '') if 'Scheme Name' in row else '',
+                'passbook_no': row.get('Passbook number', '') if 'Passbook number' in row else '',
+                'paid_date': row.get('Date Clean', ''),
+                'customer_phone': row['Clean Phone'],
+                'index': idx
             })
-            continue
 
-        if pd.isna(joined_date):
-            not_enrolled_reasons['missing joined date'] += 1
-            matched_rows.append({
-                "Branch": branch, "Referrer Name": referrer, "Referee Name": referee,
-                "Referee Phone": phone, "Employee Code": emp_code,
-                "Registered Date": reg_date, "Joined Date": pd.NaT,
-                "Transaction Date": pd.NaT, "Scheme": None, "Installment": None,
-                "Enrollment Amount": float(enrollment_amount) if pd.notna(enrollment_amount) else None,
-                "Paid Amount": None, "Passbook": "",
-                "Match Reason": "Not Enrolled (missing joined date)",
-                "Category": "Not Enrolled", "Employee Category": category, "Is Duplicate": False,
-            })
-            continue
+        def get_transaction_details(row):
+            customer_phone = row['Customer Phone']
+            updated_date = row['Updated Date']
+            enrollment_amount = row['Customer Enrollment Amount']
 
-        if pd.isna(enrollment_amount):
-            not_enrolled_reasons['missing enrollment amount'] += 1
-            matched_rows.append({
-                "Branch": branch, "Referrer Name": referrer, "Referee Name": referee,
-                "Referee Phone": phone, "Employee Code": emp_code,
-                "Registered Date": reg_date, "Joined Date": joined_date,
-                "Transaction Date": pd.NaT, "Scheme": None, "Installment": None,
-                "Enrollment Amount": None, "Paid Amount": None, "Passbook": "",
-                "Match Reason": "Not Enrolled (missing enrollment amount)",
-                "Category": "Not Enrolled", "Employee Category": category, "Is Duplicate": False,
-            })
-            continue
+            if pd.isna(updated_date) or customer_phone == "":
+                return np.nan, "", ""
 
-        # ============================================
-        # STRICT 3-FIELD MATCH
-        # ============================================
-        key = (phone, joined_date.date())
-        candidates = txn_by_phone_date.get(key, [])
+            match_key = customer_phone + "_" + str(updated_date)
 
-        # Filter by amount (exact, ±0.01)
-        exact_matches = [
-            c for c in candidates
-            if pd.notna(c.get('amount')) and abs(c['amount'] - enrollment_amount) <= 0.01
+            if match_key in transaction_lookup:
+                transactions = transaction_lookup[match_key]
+                for trans in reversed(transactions):
+                    if pd.notna(enrollment_amount) and pd.notna(trans['saved_amount']):
+                        if abs(trans['saved_amount'] - enrollment_amount) <= 0.01:
+                            return trans['saved_amount'], trans['scheme_name'], trans['passbook_no']
+                oldest_trans = transactions[-1]
+                return oldest_trans['saved_amount'], oldest_trans['scheme_name'], oldest_trans['passbook_no']
+            else:
+                return np.nan, "", ""
+
+        transaction_details = final_report.apply(get_transaction_details, axis=1, result_type='expand')
+        final_report['Customer Payment'] = transaction_details[0]
+        final_report['Scheme Name'] = transaction_details[1]
+        final_report['Scheme Passbook Number'] = transaction_details[2]
+
+        final_report['True/False'] = np.where(
+            abs(final_report['Customer Enrollment Amount'] - final_report['Customer Payment']) <= 0.01,
+            True, False
+        )
+
+        final_report.loc[final_report['True/False'] == False, 'Customer Payment'] = np.nan
+        final_report.loc[final_report['True/False'] == False, 'Scheme Name'] = ''
+        final_report.loc[final_report['True/False'] == False, 'Scheme Passbook Number'] = ''
+
+        final_report['Not Enrolled'] = final_report['Customer Payment'].isna()
+
+        final_report = self.match_with_bss_report(final_report)
+
+        final_report['Month'] = final_report['Updated Date'].apply(
+            lambda x: x.strftime('%B').lower() if pd.notna(x) else ''
+        )
+
+        final_columns = [
+            'Updated Date', 'Customer Name', 'Customer Phone', 'Customer Enrollment Amount',
+            'Status', 'Employee Name', 'Referral Code', 'Employee Phone', 'Employee Code',
+            'Branch', 'Customer Payment', 'True/False', 'Scheme Name', 'Scheme Passbook Number',
+            'Category', 'Month', 'Not Enrolled'
         ]
 
-        if not exact_matches:
-            if not candidates:
-                reason = "no txn on phone+date"
-            else:
-                reason = f"amount mismatch on {len(candidates)} txn(s)"
-            not_enrolled_reasons[reason] += 1
-            matched_rows.append({
-                "Branch": branch, "Referrer Name": referrer, "Referee Name": referee,
-                "Referee Phone": phone, "Employee Code": emp_code,
-                "Registered Date": reg_date, "Joined Date": joined_date,
-                "Transaction Date": candidates[0]['date'] if candidates else pd.NaT,
-                "Scheme": candidates[0]['scheme'] if candidates else None,
-                "Installment": 1,
-                "Enrollment Amount": float(enrollment_amount),
-                "Paid Amount": candidates[0]['amount'] if candidates else None,
-                "Passbook": candidates[0]['passbook'] if candidates else "",
-                "Match Reason": f"Not Enrolled ({reason})",
-                "Category": "Not Enrolled", "Employee Category": category, "Is Duplicate": False,
-            })
-            continue
+        for col in final_columns:
+            if col not in final_report.columns:
+                final_report[col] = np.nan
 
-        # Success — one row per matching transaction
-        for m in exact_matches:
-            scheme_raw = str(m.get('scheme', '')).strip()
-            passbook = str(m.get('passbook', '')).strip()
-            paid_amount = m.get('amount')
+        matched_count = final_report['Customer Payment'].notna().sum()
+        not_enrolled_count = final_report['Not Enrolled'].sum()
+        if len(final_report) > 0:
+            st.info(f"📊 Final Match Results: {matched_count} out of {len(final_report)} records matched ({matched_count/len(final_report)*100:.2f}%)")
+            st.info(f"📊 Not Enrolled Customers: {not_enrolled_count} out of {len(final_report)} ({not_enrolled_count/len(final_report)*100:.2f}%)")
 
-            if scheme_raw:
-                scheme_lower = scheme_raw.lower()
-                if classify_scheme_type(scheme_raw) == "daily":
-                    cat = "e-Silver" if "silver" in scheme_lower else "e-Gold"
-                else:
-                    cat = scheme_raw
-            else:
-                cat = "Not Enrolled"
+        total_enrollment = final_report['Customer Enrollment Amount'].sum()
+        total_payment = final_report['Customer Payment'].sum()
+        if pd.notna(total_enrollment) and pd.notna(total_payment):
+            st.info(f"💰 Total Enrollment Amount: {format_inr(total_enrollment)}")
+            st.info(f"💰 Total Payment Amount: {format_inr(total_payment)}")
 
-            matched_rows.append({
-                "Branch": branch, "Referrer Name": referrer, "Referee Name": referee,
-                "Referee Phone": phone, "Employee Code": emp_code,
-                "Registered Date": reg_date, "Joined Date": joined_date,
-                "Transaction Date": m['date'], "Scheme": scheme_raw, "Installment": 1,
-                "Enrollment Amount": float(enrollment_amount),
-                "Paid Amount": float(paid_amount) if pd.notna(paid_amount) else None,
-                "Passbook": passbook,
-                "Match Reason": "All 3 fields matched (phone + joined date + amount)",
-                "Category": cat, "Employee Category": category, "Is Duplicate": False,
-            })
+        category_counts = final_report['Category'].value_counts()
+        st.info(f"📊 Category Distribution: {dict(category_counts)}")
 
-    detail_df = pd.DataFrame(matched_rows)
-    debug_info["not_enrolled_breakdown"] = dict(not_enrolled_reasons)
+        branch_counts = final_report['Branch'].value_counts().head(10)
+        st.info(f"📊 Top 10 Branches: {dict(branch_counts)}")
 
-    if detail_df.empty:
-        return empty, [], empty, diagnostics, empty, debug_info
+        return final_report[final_columns]
 
-    # --- Duplicate detection ---
-    duplicates_df = pd.DataFrame()
-    has_passbook = detail_df['Passbook'].notna() & (detail_df['Passbook'].astype(str).str.strip() != '')
-    if has_passbook.any():
-        detail_df['_dup_key'] = (
-            detail_df['Passbook'].astype(str) + '_' +
-            detail_df['Referrer Name'].astype(str) + '_' +
-            detail_df['Branch'].astype(str)
+    def generate_branch_wise_scheme_report(self, final_report):
+        if 'Is Duplicate' in final_report.columns:
+            report_data = final_report[
+                (final_report['Is Duplicate'] == False) &
+                (final_report['Scheme Name'].notna() & (final_report['Scheme Name'] != ''))
+            ].copy()
+        else:
+            report_data = final_report[final_report['Scheme Name'].notna() & (final_report['Scheme Name'] != '')].copy()
+
+        if len(report_data) == 0:
+            branch_scheme_report = pd.DataFrame(columns=[
+                'Branch', 'Scheme Name', 'Number of Customers', 'Total Enrollment Amount',
+                'Total Payment Received', 'Number of Matched Payments', 'Unique Employees',
+                'Unique Referral Codes', 'Match Rate (%)', 'Pending Amount'
+            ])
+        else:
+            branch_scheme_report = report_data.groupby(['Branch', 'Scheme Name']).agg({
+                'Customer Name': 'count', 'Customer Enrollment Amount': 'sum',
+                'Customer Payment': 'sum', 'True/False': 'sum',
+                'Employee Name': 'nunique', 'Referral Code': 'nunique'
+            }).reset_index()
+
+            branch_scheme_report.columns = [
+                'Branch', 'Scheme Name', 'Number of Customers', 'Total Enrollment Amount',
+                'Total Payment Received', 'Number of Matched Payments', 'Unique Employees', 'Unique Referral Codes'
+            ]
+
+            branch_scheme_report['Match Rate (%)'] = np.where(
+                branch_scheme_report['Number of Customers'] > 0,
+                branch_scheme_report['Number of Matched Payments'] / branch_scheme_report['Number of Customers'] * 100, 0
+            )
+            branch_scheme_report['Pending Amount'] = (
+                branch_scheme_report['Total Enrollment Amount'] - branch_scheme_report['Total Payment Received']
+            )
+
+        ordered_branches = self.get_branch_universe(branch_scheme_report['Branch'].unique() if len(branch_scheme_report) else None)
+        present_branches = set(branch_scheme_report['Branch'].tolist())
+        missing_branches = [b for b in ordered_branches if b not in present_branches]
+        if missing_branches:
+            placeholder_rows = [{
+                'Branch': b, 'Scheme Name': 'No Scheme', 'Number of Customers': 0,
+                'Total Enrollment Amount': 0, 'Total Payment Received': 0,
+                'Number of Matched Payments': 0, 'Unique Employees': 0,
+                'Unique Referral Codes': 0, 'Match Rate (%)': 0, 'Pending Amount': 0
+            } for b in missing_branches]
+            branch_scheme_report = pd.concat([branch_scheme_report, pd.DataFrame(placeholder_rows)], ignore_index=True)
+
+        order_map = {b: i for i, b in enumerate(ordered_branches)}
+        branch_scheme_report['_branch_order'] = branch_scheme_report['Branch'].map(lambda b: order_map.get(b, len(ordered_branches)))
+        branch_scheme_report = branch_scheme_report.sort_values(
+            ['_branch_order', 'Number of Customers'], ascending=[True, False]
+        ).drop(columns=['_branch_order']).reset_index(drop=True)
+        return branch_scheme_report
+
+    def generate_branch_employee_wise_scheme_report(self, final_report):
+        if 'Is Duplicate' in final_report.columns:
+            report_data = final_report[
+                (final_report['Is Duplicate'] == False) &
+                (final_report['Scheme Name'].notna() & (final_report['Scheme Name'] != ''))
+            ].copy()
+        else:
+            report_data = final_report[final_report['Scheme Name'].notna() & (final_report['Scheme Name'] != '')].copy()
+
+        if len(report_data) == 0:
+            return pd.DataFrame()
+
+        report_data['Employee Code'] = report_data['Employee Code'].astype(str).fillna('')
+
+        emp_scheme_report = report_data.groupby(['Branch', 'Employee Name', 'Employee Code', 'Referral Code', 'Scheme Name']).agg({
+            'Customer Name': 'count', 'Customer Enrollment Amount': 'sum',
+            'Customer Payment': 'sum', 'True/False': 'sum', 'Customer Phone': 'nunique'
+        }).reset_index()
+
+        emp_scheme_report.columns = [
+            'Branch', 'Employee Name', 'Employee Code', 'Referral Code', 'Scheme Name',
+            'Number of Customers', 'Total Enrollment Amount', 'Total Payment Received',
+            'Number of Matched Payments', 'Unique Customers'
+        ]
+
+        emp_scheme_report['Match Rate (%)'] = np.where(
+            emp_scheme_report['Number of Customers'] > 0,
+            emp_scheme_report['Number of Matched Payments'] / emp_scheme_report['Number of Customers'] * 100, 0
         )
-        key_counts = detail_df[has_passbook]['_dup_key'].value_counts()
-        dup_keys = key_counts[key_counts > 1].index.tolist()
-        if dup_keys:
-            dup_rows = []
-            for grp_idx, dup_key in enumerate(dup_keys, start=1):
-                grp = detail_df[detail_df['_dup_key'] == dup_key].sort_values('Joined Date')
-                orig_idx = grp.index[0]
-                for di in grp.index[1:]:
-                    detail_df.loc[di, 'Is Duplicate'] = True
-                    orig = detail_df.loc[orig_idx]
-                    dup = detail_df.loc[di]
-                    dup_rows.append({
-                        'Group ID': f'GROUP_{grp_idx}', 'Passbook': orig['Passbook'],
-                        'Original Employee': orig['Referrer Name'],
-                        'Original Customer': orig['Referee Name'],
-                        'Original Date': orig['Joined Date'],
-                        'Original Enrollment Amount': orig['Enrollment Amount'],
-                        'Duplicate Employee': dup['Referrer Name'],
-                        'Duplicate Customer': dup['Referee Name'],
-                        'Duplicate Date': dup['Joined Date'],
-                        'Duplicate Enrollment Amount': dup['Enrollment Amount'],
-                        'Branch': orig['Branch'], 'Category': orig['Category'],
-                    })
-            duplicates_df = pd.DataFrame(dup_rows)
-            st.warning(f"⚠️ **Duplicates detected:** {len(duplicates_df)} record(s) in {len(dup_keys)} group(s).")
-        detail_df = detail_df.drop(columns=['_dup_key'])
-
-    # Diagnostics
-    total = len(detail_df)
-    matched = int((detail_df['Category'] != 'Not Enrolled').sum())
-    not_enrolled = total - matched
-    diagnostics.update({
-        "total_referrals": total,
-        "matched_referrals": matched,
-        "not_enrolled": not_enrolled,
-        "duplicates": int(detail_df['Is Duplicate'].sum()),
-    })
-
-    # Branch ordering
-    branch_universe = detail_df['Branch'].dropna().unique().tolist()
-    ordered_branches = build_branch_order(branch_universe)
-
-    sessional_categories = sorted([
-        c for c in detail_df['Category'].unique()
-        if c not in ('e-Gold', 'e-Silver', 'Not Enrolled')
-    ])
-    category_order = ["e-Gold", "e-Silver"] + sessional_categories + ["Not Enrolled"]
-
-    pivot = detail_df.pivot_table(
-        index="Branch", columns="Category",
-        values="Referee Phone", aggfunc="count", fill_value=0
-    )
-    for cat in category_order:
-        if cat not in pivot.columns:
-            pivot[cat] = 0
-    pivot = pivot[category_order]
-    for b in ordered_branches:
-        if b not in pivot.index:
-            pivot.loc[b] = 0
-    pivot = pivot.reindex(ordered_branches)
-    pivot["Grand Total"] = pivot.sum(axis=1)
-    total_row = pivot.sum(axis=0)
-    total_row.name = "Total"
-    pivot = pd.concat([pivot, pd.DataFrame([total_row])])
-    pivot = pivot.reset_index().rename(columns={"index": "Showroom"})
-
-    # Daily pivots
-    daily_list = []
-    detail_df['Match Date'] = detail_df['Joined Date'].apply(
-        lambda x: x.strftime('%d-%m-%Y') if pd.notna(x) else None
-    )
-    for date_label in sorted(
-        [d for d in detail_df['Match Date'].dropna().unique()],
-        key=lambda x: pd.to_datetime(x, format='%d-%m-%Y')
-    ):
-        day_df = detail_df[detail_df['Match Date'] == date_label]
-        day_pivot = day_df.pivot_table(
-            index="Branch", columns="Category",
-            values="Referee Phone", aggfunc="count", fill_value=0
+        emp_scheme_report['Average Enrollment Amount'] = np.where(
+            emp_scheme_report['Number of Customers'] > 0,
+            emp_scheme_report['Total Enrollment Amount'] / emp_scheme_report['Number of Customers'], 0
         )
-        for cat in category_order:
-            if cat not in day_pivot.columns:
-                day_pivot[cat] = 0
-        day_pivot = day_pivot[category_order]
-        for b in ordered_branches:
-            if b not in day_pivot.index:
-                day_pivot.loc[b] = 0
-        day_pivot = day_pivot.reindex(ordered_branches)
-        day_pivot["Grand Total"] = day_pivot.sum(axis=1)
-        day_total = day_pivot.sum(axis=0)
-        day_total.name = "Total"
-        day_pivot = pd.concat([day_pivot, pd.DataFrame([day_total])])
-        day_pivot = day_pivot.reset_index().rename(columns={"index": "Showroom"})
-        daily_list.append((date_label, day_pivot))
+        emp_scheme_report['Pending Amount'] = (
+            emp_scheme_report['Total Enrollment Amount'] - emp_scheme_report['Total Payment Received']
+        )
 
-    return pivot, daily_list, detail_df, diagnostics, duplicates_df, debug_info
-def write_referral_sheet(workbook, summary_df, daily_list, detail_df, duplicates_df,
-                         date_range, sheet_name="Referral Report"):
-    if summary_df is None or summary_df.empty:
-        return
-    ws = workbook.create_sheet(sheet_name)
-    thin = Border(
-        left=Side(style="thin", color="D9D9D9"),
-        right=Side(style="thin", color="D9D9D9"),
-        top=Side(style="thin", color="D9D9D9"),
-        bottom=Side(style="thin", color="D9D9D9")
-    )
-    header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
-    total_fill = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
-    dup_fill = PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")
-    section_color = "7030A0"
+        ordered_branches = self.get_branch_universe(emp_scheme_report['Branch'].unique())
+        order_map = {b: i for i, b in enumerate(ordered_branches)}
+        emp_scheme_report['_branch_order'] = emp_scheme_report['Branch'].map(lambda b: order_map.get(b, len(ordered_branches)))
+        emp_scheme_report = emp_scheme_report.sort_values(
+            ['_branch_order', 'Employee Name', 'Number of Customers'], ascending=[True, True, False]
+        ).drop(columns=['_branch_order']).reset_index(drop=True)
+        return emp_scheme_report
 
-    max_cols = len(summary_df.columns)
-    if daily_list:
-        for _, day_df in daily_list:
-            max_cols = max(max_cols, len(day_df.columns))
-    if detail_df is not None and not detail_df.empty:
-        max_cols = max(max_cols, len(detail_df.columns))
+    def generate_branch_summary_report(self, final_report):
+        if 'Is Duplicate' in final_report.columns:
+            branch_summary = final_report[final_report['Is Duplicate'] == False].copy()
+        else:
+            branch_summary = final_report.copy()
 
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_cols)
-    tc = ws.cell(row=1, column=1)
-    tc.value = "🎁 REFERRAL CONVERSION REPORT (Strict 3-Field Match)"
-    tc.font = Font(size=16, bold=True, color="FFFFFF")
-    tc.fill = PatternFill(start_color="203764", end_color="203764", fill_type="solid")
-    tc.alignment = Alignment(horizontal="center", vertical="center")
+        if len(branch_summary) == 0:
+            branch_summary = pd.DataFrame(columns=[
+                'Branch', 'Total Customers', 'Total Enrollment Amount', 'Total Payment Received',
+                'Matched Payments', 'Unique Employees', 'Unique Referral Codes', 'Schemes Sold',
+                'Not Enrolled', 'Match Rate (%)', 'Enrollment Rate (%)', 'Pending Amount',
+                'Average Enrollment Amount'
+            ])
+        else:
+            branch_summary = branch_summary.groupby('Branch').agg({
+                'Customer Name': 'count', 'Customer Enrollment Amount': 'sum',
+                'Customer Payment': 'sum', 'True/False': 'sum',
+                'Employee Name': 'nunique', 'Referral Code': 'nunique',
+                'Scheme Name': lambda x: (x.notna() & (x != '')).sum(), 'Not Enrolled': 'sum'
+            }).reset_index()
+
+            branch_summary.columns = [
+                'Branch', 'Total Customers', 'Total Enrollment Amount', 'Total Payment Received',
+                'Matched Payments', 'Unique Employees', 'Unique Referral Codes', 'Schemes Sold', 'Not Enrolled'
+            ]
+
+            branch_summary['Match Rate (%)'] = np.where(
+                branch_summary['Total Customers'] > 0,
+                branch_summary['Matched Payments'] / branch_summary['Total Customers'] * 100, 0
+            )
+            branch_summary['Enrollment Rate (%)'] = np.where(
+                branch_summary['Total Customers'] > 0,
+                (branch_summary['Total Customers'] - branch_summary['Not Enrolled']) / branch_summary['Total Customers'] * 100, 0
+            )
+            branch_summary['Pending Amount'] = (
+                branch_summary['Total Enrollment Amount'] - branch_summary['Total Payment Received']
+            )
+            branch_summary['Average Enrollment Amount'] = np.where(
+                branch_summary['Total Customers'] > 0,
+                branch_summary['Total Enrollment Amount'] / branch_summary['Total Customers'], 0
+            )
+
+        ordered_branches = self.get_branch_universe(branch_summary['Branch'].unique() if len(branch_summary) else None)
+        branch_summary = reindex_all_branches(branch_summary, ordered_branches, 'Branch').reset_index(drop=True)
+        return branch_summary
+
+    def generate_employee_performance_report(self, final_report):
+        if 'Is Duplicate' in final_report.columns:
+            final_report_copy = final_report[final_report['Is Duplicate'] == False].copy()
+        else:
+            final_report_copy = final_report.copy()
+
+        if len(final_report_copy) == 0:
+            return pd.DataFrame()
+
+        final_report_copy['Employee Code'] = final_report_copy['Employee Code'].astype(str).fillna('')
+
+        emp_performance = final_report_copy.groupby(['Employee Name', 'Employee Code', 'Referral Code', 'Branch', 'Category']).agg({
+            'Customer Name': 'count', 'Customer Enrollment Amount': 'sum',
+            'Customer Payment': 'sum', 'True/False': 'sum',
+            'Scheme Name': lambda x: (x.notna() & (x != '')).sum(), 'Not Enrolled': 'sum'
+        }).reset_index()
+
+        emp_performance.columns = [
+            'Employee Name', 'Employee Code', 'Referral Code', 'Branch', 'Category',
+            'Total Customers', 'Total Enrollment Amount', 'Total Payment Received',
+            'Matched Payments', 'Schemes Sold', 'Not Enrolled'
+        ]
+
+        emp_performance['Match Rate (%)'] = np.where(
+            emp_performance['Total Customers'] > 0,
+            emp_performance['Matched Payments'] / emp_performance['Total Customers'] * 100, 0
+        )
+        emp_performance['Enrollment Rate (%)'] = np.where(
+            emp_performance['Total Customers'] > 0,
+            (emp_performance['Total Customers'] - emp_performance['Not Enrolled']) / emp_performance['Total Customers'] * 100, 0
+        )
+        emp_performance['Average Enrollment Amount'] = np.where(
+            emp_performance['Total Customers'] > 0,
+            emp_performance['Total Enrollment Amount'] / emp_performance['Total Customers'], 0
+        )
+        emp_performance['Pending Amount'] = (
+            emp_performance['Total Enrollment Amount'] - emp_performance['Total Payment Received']
+        )
+
+        ordered_branches = self.get_branch_universe(emp_performance['Branch'].unique())
+        order_map = {b: i for i, b in enumerate(ordered_branches)}
+        emp_performance['_branch_order'] = emp_performance['Branch'].map(lambda b: order_map.get(b, len(ordered_branches)))
+        emp_performance = emp_performance.sort_values(
+            ['_branch_order', 'Total Customers'], ascending=[True, False]
+        ).drop(columns=['_branch_order']).reset_index(drop=True)
+        return emp_performance
+
+    def generate_registration_analysis_report(self, final_report):
+        if 'Is Duplicate' in final_report.columns:
+            reg_analysis = final_report[final_report['Is Duplicate'] == False].copy()
+        else:
+            reg_analysis = final_report.copy()
+
+        def get_registration_status(row):
+            if pd.notna(row['Customer Payment']):
+                return 'Enrolled (Payment Made)'
+            elif 'joined' in str(row['Status']).lower() or 'scheme joined' in str(row['Status']).lower():
+                return 'Registered but Not Enrolled'
+            elif 'registered' in str(row['Status']).lower() or 'customer register' in str(row['Status']).lower():
+                return 'Registered but Not Enrolled'
+            else:
+                return 'Not Enrolled'
+
+        if len(reg_analysis) == 0:
+            return pd.DataFrame(), pd.DataFrame()
+
+        reg_analysis['Registration Status'] = reg_analysis.apply(get_registration_status, axis=1)
+
+        branch_reg_summary = reg_analysis.groupby(['Branch', 'Registration Status']).agg({
+            'Customer Name': 'count', 'Customer Enrollment Amount': 'sum',
+            'Customer Payment': 'sum', 'Referral Code': 'nunique'
+        }).reset_index()
+
+        branch_reg_summary.columns = [
+            'Branch', 'Registration Status', 'Customer Count',
+            'Total Enrollment Amount', 'Total Payment Received', 'Unique Referral Codes'
+        ]
+
+        branch_reg_pivot = branch_reg_summary.pivot_table(
+            index='Branch', columns='Registration Status', values='Customer Count', fill_value=0
+        ).reset_index()
+
+        for col_name, out_name in [
+            ('Enrolled (Payment Made)', 'Total Enrolled'),
+            ('Registered but Not Enrolled', 'Total Registered'),
+            ('Not Enrolled', 'Total Not Enrolled'),
+        ]:
+            branch_reg_pivot[out_name] = branch_reg_pivot[col_name] if col_name in branch_reg_pivot.columns else 0
+
+        branch_reg_pivot['Total Customers'] = (
+            branch_reg_pivot['Total Enrolled'] + branch_reg_pivot['Total Registered'] + branch_reg_pivot['Total Not Enrolled']
+        )
+        branch_reg_pivot['Enrollment Rate (%)'] = np.where(
+            branch_reg_pivot['Total Customers'] > 0,
+            branch_reg_pivot['Total Enrolled'] / branch_reg_pivot['Total Customers'] * 100, 0
+        )
+
+        ordered_branches = self.get_branch_universe(branch_reg_pivot['Branch'].unique())
+        branch_reg_pivot = reindex_all_branches(branch_reg_pivot, ordered_branches, 'Branch').reset_index(drop=True)
+
+        if 'Is Duplicate' in final_report.columns:
+            not_enrolled_customers = final_report[(final_report['Not Enrolled'] == True) & (final_report['Is Duplicate'] == False)].copy()
+        else:
+            not_enrolled_customers = final_report[final_report['Not Enrolled'] == True].copy()
+
+        not_enrolled_customers = not_enrolled_customers[[
+            'Customer Name', 'Customer Phone', 'Employee Name', 'Employee Code',
+            'Referral Code', 'Branch', 'Status', 'Customer Enrollment Amount', 'Updated Date'
+        ]]
+
+        return branch_reg_pivot, not_enrolled_customers
+
+    def generate_branch_employee_referral_report(self, final_report, start_date=None, end_date=None):
+        if 'Is Duplicate' in final_report.columns:
+            filtered_report = final_report[final_report['Is Duplicate'] == False].copy()
+        else:
+            filtered_report = final_report.copy()
+
+        filtered_report['Employee Code'] = filtered_report['Employee Code'].astype(str).fillna('')
+
+        if start_date and end_date:
+            filtered_report['Updated Date'] = pd.to_datetime(filtered_report['Updated Date'], errors='coerce')
+            mask = (filtered_report['Updated Date'] >= pd.to_datetime(start_date)) & (filtered_report['Updated Date'] <= pd.to_datetime(end_date))
+            filtered_report = filtered_report[mask]
+
+        enrolled_data = filtered_report[filtered_report['Not Enrolled'] == False].copy()
+
+        all_schemes = enrolled_data['Scheme Name'].dropna().unique()
+        all_schemes = sorted([s for s in all_schemes if s != ''])
+        if len(all_schemes) == 0:
+            all_schemes = ['No Scheme']
+
+        branch_summary = []
+        branches = self.get_branch_universe(filtered_report['Branch'].unique())
+
+        grand_totals = {
+            'scheme_counts': {scheme: 0 for scheme in all_schemes},
+            'scheme_amounts': {scheme: 0 for scheme in all_schemes},
+            'total_enrolled_count': 0, 'total_enrolled_amount': 0, 'total_not_enrolled': 0
+        }
+
+        for branch in branches:
+            branch_data = filtered_report[filtered_report['Branch'] == branch]
+            branch_enrolled = branch_data[branch_data['Not Enrolled'] == False]
+
+            branch_row = {'Branch': branch, 'Not Enrolled Count': len(branch_data[branch_data['Not Enrolled'] == True])}
+
+            branch_total_count = 0
+            branch_total_amount = 0
+
+            for scheme in all_schemes:
+                scheme_data = branch_enrolled[branch_enrolled['Scheme Name'] == scheme]
+                scheme_count = len(scheme_data)
+                scheme_amount = scheme_data['Customer Enrollment Amount'].sum() if len(scheme_data) > 0 else 0
+                branch_row[f'{scheme} Count'] = scheme_count
+                branch_row[f'{scheme} Amount'] = scheme_amount
+                branch_total_count += scheme_count
+                branch_total_amount += scheme_amount
+                grand_totals['scheme_counts'][scheme] += scheme_count
+                grand_totals['scheme_amounts'][scheme] += scheme_amount
+
+            branch_row['Total Enrolled Count'] = branch_total_count
+            branch_row['Total Enrolled Amount'] = branch_total_amount
+
+            grand_totals['total_enrolled_count'] += branch_total_count
+            grand_totals['total_enrolled_amount'] += branch_total_amount
+            grand_totals['total_not_enrolled'] += branch_row['Not Enrolled Count']
+
+            branch_summary.append(branch_row)
+
+        branch_df = pd.DataFrame(branch_summary)
+
+        if len(branch_df) == 0:
+            return pd.DataFrame(), pd.DataFrame(), all_schemes
+
+        branch_df['Count %'] = (
+            (branch_df['Total Enrolled Count'] / grand_totals['total_enrolled_count'] * 100).round(1).astype(str) + '%'
+            if grand_totals['total_enrolled_count'] > 0 else '0%'
+        )
+        branch_df['Amount %'] = (
+            (branch_df['Total Enrolled Amount'] / grand_totals['total_enrolled_amount'] * 100).round(1).astype(str) + '%'
+            if grand_totals['total_enrolled_amount'] > 0 else '0%'
+        )
+
+        grand_total_row = {'Branch': 'Grand Total'}
+        for scheme in all_schemes:
+            grand_total_row[f'{scheme} Count'] = grand_totals['scheme_counts'][scheme]
+            grand_total_row[f'{scheme} Amount'] = grand_totals['scheme_amounts'][scheme]
+        grand_total_row['Total Enrolled Count'] = grand_totals['total_enrolled_count']
+        grand_total_row['Total Enrolled Amount'] = grand_totals['total_enrolled_amount']
+        grand_total_row['Not Enrolled Count'] = grand_totals['total_not_enrolled']
+        grand_total_row['Count %'] = '100%'
+        grand_total_row['Amount %'] = '100%'
+
+        branch_df = pd.concat([branch_df, pd.DataFrame([grand_total_row])], ignore_index=True)
+
+        amount_columns = [col for col in branch_df.columns if 'Amount' in col and col != 'Amount %']
+        for col in amount_columns:
+            branch_df[col] = pd.to_numeric(branch_df[col], errors='coerce').fillna(0)
+
+        scheme_cols = []
+        for scheme in all_schemes:
+            scheme_cols.append(f'{scheme} Count')
+            scheme_cols.append(f'{scheme} Amount')
+        desired_col_order = (
+            ['Branch', 'Count %', 'Amount %'] + scheme_cols +
+            ['Total Enrolled Count', 'Total Enrolled Amount', 'Not Enrolled Count']
+        )
+        desired_col_order = [c for c in desired_col_order if c in branch_df.columns]
+        remaining_cols = [c for c in branch_df.columns if c not in desired_col_order]
+        branch_df = branch_df[desired_col_order + remaining_cols]
+
+        employee_details = []
+        for branch in branches:
+            branch_data = filtered_report[filtered_report['Branch'] == branch]
+            branch_enrolled = branch_data[branch_data['Not Enrolled'] == False]
+
+            employees_with_enrolled = branch_enrolled['Employee Name'].dropna().unique()
+            not_enrolled_employees = branch_data[branch_data['Not Enrolled'] == True]['Employee Name'].dropna().unique()
+            all_employees = list(set(list(employees_with_enrolled) + list(not_enrolled_employees)))
+
+            if len(all_employees) == 0 and len(branch_enrolled) == 0:
+                emp_row = {
+                    'Branch': branch, 'Employee Name': '', 'Employee Code': '', 'Referral Code': '',
+                    'Total Enrolled Count': 0, 'Total Enrolled Amount': 0,
+                    'Not Enrolled Count': len(branch_data[branch_data['Not Enrolled'] == True])
+                }
+                for scheme in all_schemes:
+                    emp_row[f'{scheme} Count'] = 0
+                    emp_row[f'{scheme} Amount'] = 0
+                employee_details.append(emp_row)
+            else:
+                for employee in all_employees:
+                    emp_data = branch_data[branch_data['Employee Name'] == employee]
+                    emp_enrolled = emp_data[emp_data['Not Enrolled'] == False]
+
+                    emp_code = emp_data['Employee Code'].iloc[0] if len(emp_data) > 0 and pd.notna(emp_data['Employee Code'].iloc[0]) else ''
+                    referral_code = emp_data['Referral Code'].iloc[0] if len(emp_data) > 0 and pd.notna(emp_data['Referral Code'].iloc[0]) else ''
+
+                    employee_row = {
+                        'Branch': branch,
+                        'Employee Name': employee if employee and str(employee) != 'nan' else 'Unassigned',
+                        'Employee Code': str(emp_code) if emp_code else '',
+                        'Referral Code': str(referral_code) if referral_code else '',
+                    }
+
+                    emp_total_count = 0
+                    emp_total_amount = 0
+                    for scheme in all_schemes:
+                        scheme_data = emp_enrolled[emp_enrolled['Scheme Name'] == scheme]
+                        scheme_count = len(scheme_data)
+                        scheme_amount = scheme_data['Customer Enrollment Amount'].sum() if len(scheme_data) > 0 else 0
+                        employee_row[f'{scheme} Count'] = scheme_count
+                        employee_row[f'{scheme} Amount'] = scheme_amount
+                        emp_total_count += scheme_count
+                        emp_total_amount += scheme_amount
+
+                    employee_row['Total Enrolled Count'] = emp_total_count
+                    employee_row['Total Enrolled Amount'] = emp_total_amount
+                    employee_row['Not Enrolled Count'] = len(emp_data[emp_data['Not Enrolled'] == True])
+                    employee_details.append(employee_row)
+
+                unassigned_data = branch_enrolled[branch_enrolled['Employee Name'].isna() | (branch_enrolled['Employee Name'] == '')]
+                if len(unassigned_data) > 0:
+                    unassigned_row = {'Branch': branch, 'Employee Name': 'Unassigned', 'Employee Code': '', 'Referral Code': ''}
+                    unassigned_total_count = 0
+                    unassigned_total_amount = 0
+                    for scheme in all_schemes:
+                        scheme_data = unassigned_data[unassigned_data['Scheme Name'] == scheme]
+                        scheme_count = len(scheme_data)
+                        scheme_amount = scheme_data['Customer Enrollment Amount'].sum() if len(scheme_data) > 0 else 0
+                        unassigned_row[f'{scheme} Count'] = scheme_count
+                        unassigned_row[f'{scheme} Amount'] = scheme_amount
+                        unassigned_total_count += scheme_count
+                        unassigned_total_amount += scheme_amount
+                    unassigned_row['Total Enrolled Count'] = unassigned_total_count
+                    unassigned_row['Total Enrolled Amount'] = unassigned_total_amount
+                    unassigned_row['Not Enrolled Count'] = 0
+                    employee_details.append(unassigned_row)
+
+        employee_df = pd.DataFrame(employee_details)
+        if len(employee_df) > 0:
+            branch_order_map = {b: i for i, b in enumerate(branches)}
+            employee_df['_branch_order'] = employee_df['Branch'].map(lambda b: branch_order_map.get(b, len(branches)))
+            employee_df = employee_df.sort_values(
+                ['_branch_order', 'Total Enrolled Count'], ascending=[True, False]
+            ).drop(columns=['_branch_order']).reset_index(drop=True)
+
+        amount_columns_emp = [col for col in employee_df.columns if 'Amount' in col]
+        for col in amount_columns_emp:
+            if col in employee_df.columns:
+                employee_df[col] = pd.to_numeric(employee_df[col], errors='coerce').fillna(0)
+
+        if len(employee_df) > 0:
+            emp_desired_order = (
+                ['Branch', 'Employee Name', 'Employee Code', 'Referral Code'] + scheme_cols +
+                ['Total Enrolled Count', 'Total Enrolled Amount', 'Not Enrolled Count']
+            )
+            emp_desired_order = [c for c in emp_desired_order if c in employee_df.columns]
+            emp_remaining_cols = [c for c in employee_df.columns if c not in emp_desired_order]
+            employee_df = employee_df[emp_desired_order + emp_remaining_cols]
+
+        return branch_df, employee_df, all_schemes
+
+
+# ---------------------------------------------------------------------------
+# Cached helpers
+# ---------------------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def cached_read_file(uploaded_file):
+    if uploaded_file.name.lower().endswith('.csv'):
+        return pd.read_csv(uploaded_file, keep_default_na=False, na_values=[])
+    return pd.read_excel(uploaded_file, keep_default_na=False, na_values=[])
+
+
+def validate_columns(df, required_cols, label):
+    missing = [c for c in required_cols if c not in df.columns]
+    return missing
+
+
+@st.cache_data(show_spinner=False)
+def cached_generate_pipeline(employees_file, referrals_file, transactions_file, bss_file):
+    employees_df = cached_read_file(employees_file)
+    referrals_df = cached_read_file(referrals_file)
+    transactions_df = cached_read_file(transactions_file)
+    bss_df = cached_read_file(bss_file) if bss_file else None
+
+    generator = ReportGenerator(employees_df, referrals_df, transactions_df, bss_df)
+    final_report = generator.generate_report()
+
+    if final_report is None:
+        return None
+
+    final_report_with_dup_flag, duplicates_df, duplicate_indices, non_duplicate_report = \
+        generator.detect_and_separate_duplicates(final_report)
+
+    return {
+        "employees_df": employees_df,
+        "referrals_df": referrals_df,
+        "transactions_df": transactions_df,
+        "bss_df": bss_df,
+        "final_report": final_report_with_dup_flag,
+        "duplicates_df": duplicates_df,
+        "duplicate_indices": duplicate_indices,
+        "non_duplicate_report": non_duplicate_report,
+    }
+
+
+# ===========================================================================
+# Single-page Excel export (filter-aware)
+# ===========================================================================
+def format_inr(value, decimals=0):
+    """Format number in Indian numbering system: 1,23,45,678"""
+    if pd.isna(value):
+        return ""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+    if value == 0:
+        return "-"
+
+    negative = value < 0
+    value = abs(value)
+    s = f"{value:.{decimals}f}" if decimals else f"{value:.0f}"
+    if '.' in s:
+        int_part, dec_part = s.split('.')
+    else:
+        int_part, dec_part = s, ''
+
+    if len(int_part) > 3:
+        last3 = int_part[-3:]
+        rest = int_part[:-3]
+        groups = []
+        while len(rest) > 2:
+            groups.insert(0, rest[-2:])
+            rest = rest[:-2]
+        if rest:
+            groups.insert(0, rest)
+        formatted_int = ','.join(groups + [last3])
+    else:
+        formatted_int = int_part
+
+    formatted = f"{formatted_int}.{dec_part}" if dec_part else formatted_int
+    return f"-{formatted}" if negative else formatted
+
+
+def create_single_page_referral_excel(
+    branch_df,
+    employee_df,
+    schemes,
+    start_date=None,
+    end_date=None,
+    selected_branches=None,
+    output=None,
+):
+    """
+    Single-sheet Excel with:
+      Row 1 : Title (dark blue)
+      Row 2 : Date range (medium blue)
+      Row 3 : Selected branches note (light blue)
+      Row 4 : thin spacer
+      Row 5 : BRANCH-WISE SUMMARY section band
+      Row 6 : Branch header (blue)
+      Row 7+: Branch rows + Grand Total (gold)
+      -- spacer --
+             EMPLOYEE-WISE DETAILS section band
+             Employee header
+             Employee rows
+       Employee Grand Total (gold)
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Branch & Employee Referral"
+
+    TITLE_FONT = Font(name="Calibri", size=16, bold=True, color="FFFFFF")
+    SUBTITLE_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    BRANCH_NOTE_FONT = Font(name="Calibri", size=10, italic=True, color="1F4E78")
+    HEADER_FONT = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    BODY_FONT = Font(name="Calibri", size=10)
+    GRAND_FONT = Font(name="Calibri", size=10, bold=True)
+    SEC_FONT = Font(name="Calibri", size=12, bold=True, color="1F4E78")
+
+    TITLE_FILL = PatternFill("solid", start_color="1F4E78")
+    SUBTITLE_FILL = PatternFill("solid", start_color="2E75B6")
+    BRANCH_NOTE_FILL = PatternFill("solid", start_color="E7F0FB")
+    HEADER_FILL = PatternFill("solid", start_color="4472C4")
+    GRAND_FILL = PatternFill("solid", start_color="FFD966")
+    ALT_FILL = PatternFill("solid", start_color="F2F7FB")
+    SECTION_FILL = PatternFill("solid", start_color="D9E1F2")
+
+    thin = Side(style="thin", color="B4C6E7")
+    BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LEFT = Alignment(horizontal="left", vertical="center")
+    RIGHT = Alignment(horizontal="right", vertical="center")
+
+    scheme_pairs = []
+    for s in schemes:
+        scheme_pairs.append(f"{s} Count")
+        scheme_pairs.append(f"{s} Amount")
+
+    branch_cols = ["Branch", "Count %", "Amount %"] + scheme_pairs + \
+                  ["Total Enrolled Count", "Total Enrolled Amount", "Not Enrolled Count"]
+
+    employee_cols = ["Branch", "Employee Code", "Referral Code"] + scheme_pairs + \
+                    ["Total Enrolled Count", "Total Enrolled Amount", "Not Enrolled Count"]
+
+    n_cols = max(len(branch_cols), len(employee_cols))
+
+    # Row 1: Title
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_cols)
+    c = ws.cell(row=1, column=1, value="Branch & Employee - Wise Referral Report")
+    c.font = TITLE_FONT
+    c.fill = TITLE_FILL
+    c.alignment = CENTER
     ws.row_dimensions[1].height = 30
 
-    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=max_cols)
-    dc = ws.cell(row=2, column=1)
-    dc.value = f"Report Period: {date_range[0]} to {date_range[1]}  |  Match: Phone + Joined Date + Amount + Installment #1"
-    dc.font = Font(size=12, bold=True)
-    dc.alignment = Alignment(horizontal="center", vertical="center")
-
-    write_section_header(ws, 4,
-                         f"🏢 BRANCH-WISE REFERRAL SUMMARY  ({date_range[0]} to {date_range[1]})",
-                         max_cols, section_color)
-    summary_header_row = 5
-    for c_idx, col_name in enumerate(summary_df.columns, start=1):
-        cell = ws.cell(row=summary_header_row, column=c_idx)
-        cell.value = col_name
-        is_total_col = col_name == "Grand Total"
-        cell.font = Font(bold=True, color="FFFFFF" if is_total_col else "000000")
-        cell.fill = PatternFill(
-            start_color="C00000" if is_total_col else "D9E1F2",
-            end_color="C00000" if is_total_col else "D9E1F2",
-            fill_type="solid"
-        )
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = thin
-    for r_idx, row in enumerate(summary_df.values, start=summary_header_row + 1):
-        is_total_row = str(row[0]).strip().lower() == "total"
-        for c_idx, val in enumerate(row, start=1):
-            cell = ws.cell(row=r_idx, column=c_idx)
-            cell.value = _fmt_cell(val)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = thin
-            if c_idx > 1 and isinstance(cell.value, (int, float)):
-                cell.number_format = '#,##0'
-            if is_total_row:
-                cell.font = Font(bold=True)
-                cell.fill = total_fill
-
-    last_row = summary_header_row + len(summary_df)
-
-    if daily_list:
-        for date_label, day_df in daily_list:
-            last_row += 3
-            write_section_header(ws, last_row, f"📅 REFERRAL — {date_label}",
-                                 max(len(day_df.columns), max_cols), section_color)
-            d_head_row = last_row + 1
-            for c_idx, col_name in enumerate(day_df.columns, start=1):
-                cell = ws.cell(row=d_head_row, column=c_idx)
-                cell.value = col_name
-                is_total_col = col_name == "Grand Total"
-                cell.font = Font(bold=True, color="FFFFFF" if is_total_col else "000000")
-                cell.fill = PatternFill(
-                    start_color="C00000" if is_total_col else "D9E1F2",
-                    end_color="C00000" if is_total_col else "D9E1F2",
-                    fill_type="solid"
-                )
-                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                cell.border = thin
-            for r_idx, row in enumerate(day_df.values, start=d_head_row + 1):
-                is_total_row = str(row[0]).strip().lower() == "total"
-                for c_idx, val in enumerate(row, start=1):
-                    cell = ws.cell(row=r_idx, column=c_idx)
-                    cell.value = _fmt_cell(val)
-                    cell.alignment = Alignment(horizontal="center", vertical="center")
-                    cell.border = thin
-                    if c_idx > 1 and isinstance(cell.value, (int, float)):
-                        cell.number_format = '#,##0'
-                    if is_total_row:
-                        cell.font = Font(bold=True)
-                        cell.fill = total_fill
-            last_row = d_head_row + len(day_df)
-
-    if detail_df is not None and not detail_df.empty:
-        last_row += 3
-        write_section_header(ws, last_row, "📋 REFERRAL MATCH DETAILS", max_cols, section_color)
-        detail_header_row = last_row + 1
-        display_cols = [c for c in detail_df.columns if c not in ("Referee Phone", "Match Date")]
-        detail_display = detail_df[display_cols].copy()
-        for col in ["Registered Date", "Joined Date", "Transaction Date"]:
-            if col in detail_display.columns:
-                detail_display[col] = detail_display[col].apply(
-                    lambda x: x.strftime("%d-%m-%Y") if pd.notna(x) else ""
-                )
-        for c_idx, col_name in enumerate(detail_display.columns, start=1):
-            cell = ws.cell(row=detail_header_row, column=c_idx)
-            cell.value = col_name
-            cell.font = Font(bold=True)
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.border = thin
-        is_dup_col_idx = None
-        if "Is Duplicate" in detail_display.columns:
-            is_dup_col_idx = list(detail_display.columns).index("Is Duplicate") + 1
-        for r_idx, row in enumerate(detail_display.values, start=detail_header_row + 1):
-            is_dup = bool(row[is_dup_col_idx - 1]) if is_dup_col_idx else False
-            for c_idx, val in enumerate(row, start=1):
-                cell = ws.cell(row=r_idx, column=c_idx)
-                cell.value = val
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-                cell.border = thin
-                if is_dup:
-                    cell.fill = dup_fill
-
-    if duplicates_df is not None and not duplicates_df.empty:
-        dup_ws = workbook.create_sheet("Duplicate Records")
-        for c_idx, col_name in enumerate(duplicates_df.columns, start=1):
-            cell = dup_ws.cell(row=1, column=c_idx)
-            cell.value = col_name
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill(start_color="C00000", end_color="C00000", fill_type="solid")
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.border = thin
-        for r_idx, row in enumerate(duplicates_df.values, start=2):
-            for c_idx, val in enumerate(row, start=1):
-                cell = dup_ws.cell(row=r_idx, column=c_idx)
-                cell.value = val
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-                cell.border = thin
-                cell.fill = dup_fill
-        for col_idx in range(1, len(duplicates_df.columns) + 1):
-            letter = get_column_letter(col_idx)
-            max_len = 12
-            for cell in dup_ws[letter]:
-                if cell.value:
-                    max_len = max(max_len, len(str(cell.value)))
-            dup_ws.column_dimensions[letter].width = min(max_len + 2, 30)
-        dup_ws.sheet_view.showGridLines = False
-
-    for col_idx in range(1, max_cols + 1):
-        letter = get_column_letter(col_idx)
-        max_len = 12
-        for cell in ws[letter]:
-            if cell.value:
-                max_len = max(max_len, len(str(cell.value)))
-        ws.column_dimensions[letter].width = min(max_len + 2, 28)
-
-    ws.sheet_view.showGridLines = False
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-def create_formatted_excel(daily_data, sessional_data, date_range, report_title,
-                           referral_summary=None, referral_daily=None,
-                           referral_detail=None, referral_duplicates=None):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        workbook = writer.book
-        if "Sheet" in workbook.sheetnames:
-            del workbook["Sheet"]
-        sheets_written = 0
-        if daily_data["schemes"]:
-            write_sheet(workbook, daily_data)
-            sheets_written += 1
-        if sessional_data["schemes"]:
-            write_sheet(workbook, sessional_data)
-            sheets_written += 1
-        if referral_summary is not None and not referral_summary.empty:
-            write_referral_sheet(
-                workbook, referral_summary,
-                referral_daily if referral_daily is not None else [],
-                referral_detail if referral_detail is not None else pd.DataFrame(),
-                referral_duplicates if referral_duplicates is not None else pd.DataFrame(),
-                date_range, sheet_name="Referral Report"
-            )
-            sheets_written += 1
-        if sheets_written == 0:
-            placeholder = workbook.create_sheet("No Data")
-            placeholder["A1"] = "No data matched the selected filters."
-    output.seek(0)
-    return output.getvalue()
-def add_avg_ticket_size_comparison(summary_df):
-    if summary_df.empty:
-        return pd.DataFrame()
-    scheme_rows = summary_df[summary_df["Scheme"] != "Grand Total"].copy()
-    if scheme_rows.empty:
-        return pd.DataFrame()
-    result_data = []
-    for _, row in scheme_rows.iterrows():
-        fc = row["First Enrollment Count"]
-        fa = row["First Enrollment Amount"]
-        cc = row["Collection Count"]
-        ca = row["Collection Amount"]
-        f_avg = fa / fc if fc > 0 else 0
-        c_avg = ca / cc if cc > 0 else 0
-        diff = c_avg - f_avg
-        if f_avg > 0:
-            pct_change = round(diff / f_avg, 4)
-        elif c_avg > 0:
-            pct_change = "N/A"
-        else:
-            pct_change = 0
-        result_data.append({
-            "Scheme": row["Scheme"],
-            "First Enrollment Count": int(fc),
-            "First Enrollment Amount": int(fa),
-            "First Enrollment Avg Ticket": int(round(f_avg)),
-            "Collection Count": int(cc),
-            "Collection Amount": int(ca),
-            "Collection Avg Ticket": int(round(c_avg)),
-            "Difference": int(round(diff)),
-            "% Change": pct_change,
-        })
-    tf = sum(d["First Enrollment Count"] for d in result_data)
-    ta = sum(d["First Enrollment Amount"] for d in result_data)
-    cf = sum(d["Collection Count"] for d in result_data)
-    ca = sum(d["Collection Amount"] for d in result_data)
-    tfa = ta / tf if tf > 0 else 0
-    tca = ca / cf if cf > 0 else 0
-    tdiff = tca - tfa
-    tpct = round(tdiff / tfa, 4) if tfa > 0 else ("N/A" if tca > 0 else 0)
-    result_data.append({
-        "Scheme": "Grand Total", "First Enrollment Count": int(tf),
-        "First Enrollment Amount": int(ta), "First Enrollment Avg Ticket": int(round(tfa)),
-        "Collection Count": int(cf), "Collection Amount": int(ca),
-        "Collection Avg Ticket": int(round(tca)),
-        "Difference": int(round(tdiff)), "% Change": tpct,
-    })
-    return pd.DataFrame(result_data)
-def display_avg_ticket_comparison(avg_ticket_df):
-    if avg_ticket_df.empty:
-        return
-    st.subheader("📊 Average Ticket Size Comparison")
-    display_df = avg_ticket_df.copy()
-    for col in ["First Enrollment Count", "Collection Count"]:
-        if col in display_df.columns:
-            display_df[col] = display_df[col].apply(
-                lambda x: f"{int(x):,}" if isinstance(x, (int, float)) else x
-            )
-    for col in ["First Enrollment Amount", "Collection Amount",
-                "First Enrollment Avg Ticket", "Collection Avg Ticket", "Difference"]:
-        if col in display_df.columns:
-            display_df[col] = display_df[col].apply(
-                lambda x: f"{int(x):,}" if isinstance(x, (int, float)) else x
-            )
-    if "% Change" in display_df.columns:
-        display_df["% Change"] = display_df["% Change"].apply(
-            lambda x: f"{x * 100:.2f}%" if isinstance(x, (int, float)) else x
-        )
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
-def get_rate_column_name(scheme):
-    if pd.isna(scheme):
-        return None
-    sl = str(scheme).lower()
-    if "e-gold" in sl or "egold" in sl or "e gold" in sl:
-        return "Gold Rate"
-    elif "e-silver" in sl or "esilver" in sl or "e silver" in sl:
-        return "Silver Rate"
-    if "christmas" in sl or "diwali" in sl or "pongal" in sl:
-        return None
-    elif "akshaya tritiya" in sl:
-        return "Gold Rate"
-    return f"{scheme} Rate"
-def generate_report_data(df, schemes):
-    if not schemes or df.empty:
-        return (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
-
-    installment_one = df[(df["Installment number"] == 1) & (df["Passbook number"].notna())].copy()
-    installment_one = installment_one.sort_values(["Passbook number", "Date", "Id"])
-    first_df = installment_one.drop_duplicates(subset=["Passbook number"], keep="first").copy()
-    collection_df = df[df["Installment number"].notna() & (df["Installment number"] != 1)].copy()
-
-    first_df["Customer Key"] = first_df["Customer Phone Number"].fillna("").astype(str).str.strip()
-    first_df["Valid Phone"] = (
-        first_df["Customer Key"].notna()
-        & (first_df["Customer Key"] != "")
-        & (first_df["Customer Key"] != "nan")
-    )
-
-    summary_rows = []
-    for scheme in schemes:
-        s_first = first_df[first_df["Scheme"] == scheme]
-        s_coll = collection_df[collection_df["Scheme"] == scheme]
-        fc = len(s_first)
-        fa = s_first["Saved Amount"].sum()
-        ud = s_first["Date"].nunique()
-        cc = len(s_coll)
-        ca = s_coll["Saved Amount"].sum()
-        cd = s_coll["Date"].nunique()
-        summary_rows.append({
-            "Scheme": scheme, "First Enrollment Count": fc, "First Enrollment Amount": fa,
-            "Avg Count/Day": fc / ud if ud > 0 else 0,
-            "Avg Amount/Day": fa / ud if ud > 0 else 0,
-            "Collection Count": cc, "Collection Amount": ca,
-            "Avg Collection Count/Day": cc / cd if cd > 0 else 0,
-            "Avg Collection Amount/Day": ca / cd if cd > 0 else 0,
-        })
-    if summary_rows:
-        gfc = sum(r["First Enrollment Count"] for r in summary_rows)
-        gfa = sum(r["First Enrollment Amount"] for r in summary_rows)
-        gcc = sum(r["Collection Count"] for r in summary_rows)
-        gca = sum(r["Collection Amount"] for r in summary_rows)
-        td = df["Date"].nunique()
-        summary_rows.append({
-            "Scheme": "Grand Total", "First Enrollment Count": gfc, "First Enrollment Amount": gfa,
-            "Avg Count/Day": gfc / td if td > 0 else 0,
-            "Avg Amount/Day": gfa / td if td > 0 else 0,
-            "Collection Count": gcc, "Collection Amount": gca,
-            "Avg Collection Count/Day": gcc / td if td > 0 else 0,
-            "Avg Collection Amount/Day": gca / td if td > 0 else 0,
-        })
-    summary_df = pd.DataFrame(summary_rows)
-    avg_ticket_df = add_avg_ticket_size_comparison(summary_df)
-
-    dates = sorted(df["Date"].dropna().unique())
-
-    enrollment_rows = []
-    for date in dates:
-        row = {"Date": pd.Timestamp(date).strftime("%d-%m-%Y")}
-        tc, ta = 0, 0
-        for scheme in schemes:
-            rc = get_rate_column_name(scheme)
-            sd = df[(df["Date"] == date) & (df["Scheme"] == scheme)]
-            rate = sd["Metal Rate"].iloc[0] if not sd.empty else 0
-            if rc is not None:
-                row[rc] = rate
-            temp = first_df[(first_df["Date"] == date) & (first_df["Scheme"] == scheme)]
-            cnt, amt = len(temp), temp["Saved Amount"].sum()
-            row[f"{scheme} Count"] = cnt
-            row[f"{scheme} Amount"] = amt
-            row[f"{scheme} Avg Ticket"] = amt / cnt if cnt > 0 else 0
-            tc += cnt
-            ta += amt
-        row["Total Count"] = tc
-        row["Total Amount"] = ta
-        row["Total Avg Ticket"] = ta / tc if tc > 0 else 0
-        enrollment_rows.append(row)
-    enrollment_df = pd.DataFrame(enrollment_rows)
-
-    enrollment_columns = ["Date"]
-    for scheme in schemes:
-        rc = get_rate_column_name(scheme)
-        if rc is not None:
-            enrollment_columns.append(rc)
-        enrollment_columns.extend([f"{scheme} Count", f"{scheme} Amount", f"{scheme} Avg Ticket"])
-    enrollment_columns.extend(["Total Count", "Total Amount", "Total Avg Ticket"])
-    enrollment_df = enrollment_df[[c for c in enrollment_columns if c in enrollment_df.columns]]
-
-    if not enrollment_df.empty:
-        total_row = {"Date": f"{len(enrollment_df)} Days"}
-        for scheme in schemes:
-            rc = get_rate_column_name(scheme)
-            if rc is not None and rc in enrollment_df.columns:
-                total_row[rc] = "-"
-            tc_ = enrollment_df[f"{scheme} Count"].sum()
-            ta_ = enrollment_df[f"{scheme} Amount"].sum()
-            total_row[f"{scheme} Count"] = tc_
-            total_row[f"{scheme} Amount"] = ta_
-            total_row[f"{scheme} Avg Ticket"] = ta_ / tc_ if tc_ > 0 else 0
-        tc_ = enrollment_df["Total Count"].sum()
-        ta_ = enrollment_df["Total Amount"].sum()
-        total_row["Total Count"] = tc_
-        total_row["Total Amount"] = ta_
-        total_row["Total Avg Ticket"] = ta_ / tc_ if tc_ > 0 else 0
-        enrollment_df = pd.concat([enrollment_df, pd.DataFrame([total_row])], ignore_index=True)
-
-    collection_rows = []
-    for date in dates:
-        row = {"Date": pd.Timestamp(date).strftime("%d-%m-%Y")}
-        tc, ta = 0, 0
-        for scheme in schemes:
-            temp = collection_df[(collection_df["Date"] == date) & (collection_df["Scheme"] == scheme)]
-            cnt, amt = len(temp), temp["Saved Amount"].sum()
-            row[f"{scheme} Count"] = cnt
-            row[f"{scheme} Amount"] = amt
-            row[f"{scheme} Avg Ticket"] = amt / cnt if cnt > 0 else 0
-            tc += cnt
-            ta += amt
-        row["Total Count"] = tc
-        row["Total Amount"] = ta
-        row["Total Avg Ticket"] = ta / tc if tc > 0 else 0
-        collection_rows.append(row)
-    collection_df_report = pd.DataFrame(collection_rows)
-
-    collection_columns = ["Date"]
-    for scheme in schemes:
-        collection_columns.extend([f"{scheme} Count", f"{scheme} Amount", f"{scheme} Avg Ticket"])
-    collection_columns.extend(["Total Count", "Total Amount", "Total Avg Ticket"])
-    collection_df_report = collection_df_report[[c for c in collection_columns if c in collection_df_report.columns]]
-
-    if not collection_df_report.empty:
-        total_row = {"Date": f"{len(collection_df_report)} Days"}
-        for scheme in schemes:
-            tc_ = collection_df_report[f"{scheme} Count"].sum()
-            ta_ = collection_df_report[f"{scheme} Amount"].sum()
-            total_row[f"{scheme} Count"] = tc_
-            total_row[f"{scheme} Amount"] = ta_
-            total_row[f"{scheme} Avg Ticket"] = ta_ / tc_ if tc_ > 0 else 0
-        tc_ = collection_df_report["Total Count"].sum()
-        ta_ = collection_df_report["Total Amount"].sum()
-        total_row["Total Count"] = tc_
-        total_row["Total Amount"] = ta_
-        total_row["Total Avg Ticket"] = ta_ / tc_ if tc_ > 0 else 0
-        collection_df_report = pd.concat([collection_df_report, pd.DataFrame([total_row])], ignore_index=True)
-
-    unique_rows = []
-    for date in dates:
-        row = {"Date": pd.Timestamp(date).strftime("%d-%m-%Y")}
-        gt = 0
-        for scheme in schemes:
-            temp = first_df[
-                (first_df["Date"] == date) & (first_df["Scheme"] == scheme) & (first_df["Valid Phone"])
-            ]
-            uc = temp["Customer Key"].nunique()
-            row[scheme] = uc
-            gt += uc
-        row["Grand Total"] = gt
-        unique_rows.append(row)
-    unique_df = pd.DataFrame(unique_rows)
-
-    unique_columns = ["Date"] + list(schemes) + ["Grand Total"]
-    if not unique_df.empty:
-        unique_df = unique_df[[c for c in unique_columns if c in unique_df.columns]]
-        total_row = {"Date": f"{len(unique_df)} Days"}
-        for scheme in schemes:
-            if scheme in unique_df.columns:
-                total_row[scheme] = unique_df[scheme].sum()
-        total_row["Grand Total"] = unique_df["Grand Total"].sum()
-        unique_df = pd.concat([unique_df, pd.DataFrame([total_row])], ignore_index=True)
-
-    summary_df = round_df(summary_df)
-    enrollment_df = round_df(enrollment_df)
-    collection_df_report = round_df(collection_df_report)
-    unique_df = round_df(unique_df)
-    avg_ticket_df = round_df(avg_ticket_df, exclude_columns=["% Change"]) if not avg_ticket_df.empty else avg_ticket_df
-
-    return summary_df, enrollment_df, collection_df_report, unique_df, avg_ticket_df
-def generate_monthly_projection(full_df, schemes):
-    empty = pd.DataFrame(columns=["Scheme", "Projected Count", "Projected Amount"])
-    if full_df.empty or not schemes:
-        return empty, empty, ""
-    latest_date = full_df["Date"].max()
-    month_start = latest_date.replace(day=1)
-    days_in_month = calendar.monthrange(latest_date.year, latest_date.month)[1]
-    days_elapsed = latest_date.day
-    if days_elapsed <= 0:
-        days_elapsed = 1
-    month_label = (
-        f"{latest_date.strftime('%B %Y')} - projected for all "
-        f"{days_in_month} days ({days_elapsed} day(s) so far)"
-    )
-    month_df = full_df[(full_df["Date"] >= month_start) & (full_df["Date"] <= latest_date)]
-    installment_one = full_df[
-        (full_df["Installment number"] == 1) & (full_df["Passbook number"].notna())
-    ].sort_values(["Passbook number", "Date", "Id"])
-    first_df = installment_one.drop_duplicates(subset=["Passbook number"], keep="first")
-    first_month_df = first_df[(first_df["Date"] >= month_start) & (first_df["Date"] <= latest_date)]
-    collection_month_df = month_df[month_df["Installment number"].notna() & (month_df["Installment number"] != 1)]
-
-    enrollment_rows, collection_rows = [], []
-    for scheme in schemes:
-        e = first_month_df[first_month_df["Scheme"] == scheme]
-        enrollment_rows.append({
-            "Scheme": scheme,
-            "Projected Count": round_value((len(e) / days_elapsed) * days_in_month),
-            "Projected Amount": round_value((e["Saved Amount"].sum() / days_elapsed) * days_in_month),
-        })
-        c = collection_month_df[collection_month_df["Scheme"] == scheme]
-        collection_rows.append({
-            "Scheme": scheme,
-            "Projected Count": round_value((len(c) / days_elapsed) * days_in_month),
-            "Projected Amount": round_value((c["Saved Amount"].sum() / days_elapsed) * days_in_month),
-        })
-    return pd.DataFrame(enrollment_rows), pd.DataFrame(collection_rows), month_label
-def generate_clean_filename(start_date, end_date):
+    # Row 2: Date range
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n_cols)
     if start_date and end_date:
-        mn = start_date.strftime("%B")
-        y = start_date.strftime("%Y")
-        sd = str(start_date.day).zfill(2)
-        ed = str(end_date.day).zfill(2)
-        if start_date.month == end_date.month:
-            return f"Daily enrollment ({mn} {sd} - {ed} {y})"
-        else:
-            return (
-                f"Daily enrollment ({start_date.strftime('%B')} {sd} - "
-                f"{end_date.strftime('%B')} {ed} {y})"
-            )
+        date_str = f"Date :- {pd.to_datetime(start_date).strftime('%d-%m-%Y')} to {pd.to_datetime(end_date).strftime('%d-%m-%Y')}"
     else:
-        return f"Daily enrollment ({pd.Timestamp.now().strftime('%B %Y')})"
+        date_str = "Date :- All Data"
+    c = ws.cell(row=2, column=1, value=date_str)
+    c.font = SUBTITLE_FONT
+    c.fill = SUBTITLE_FILL
+    c.alignment = CENTER
+    ws.row_dimensions[2].height = 22
 
-LABEL = "Branch Employee Wise Referral Report"
+    # Row 3: Branches note
+    if selected_branches:
+        branches_str = ", ".join(selected_branches)
+        branch_note = f"Branches : {branches_str}"
+    else:
+        branch_note = "Branches : All"
+
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=n_cols)
+    c = ws.cell(row=3, column=1, value=branch_note)
+    c.font = BRANCH_NOTE_FONT
+    c.fill = BRANCH_NOTE_FILL
+    c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    ws.row_dimensions[3].height = 22
+
+    # Row 4: spacer
+    ws.row_dimensions[4].height = 6
+
+    # Row 5: BRANCH-WISE SUMMARY
+    ws.merge_cells(start_row=5, start_column=1, end_row=5, end_column=n_cols)
+    c = ws.cell(row=5, column=1, value="BRANCH-WISE SUMMARY")
+    c.font = SEC_FONT
+    c.fill = SECTION_FILL
+    c.alignment = CENTER
+    ws.row_dimensions[5].height = 22
+
+    # Row 6: Branch header
+    for idx, col_name in enumerate(branch_cols, start=1):
+        cell = ws.cell(row=6, column=idx, value=col_name)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = CENTER
+        cell.border = BORDER
+    ws.row_dimensions[6].height = 32
+
+    # Branch data
+    current_row = 7
+    for i, (_, row) in enumerate(branch_df.iterrows()):
+        is_grand = str(row.get("Branch", "")).strip().lower() == "grand total"
+        for idx, col_name in enumerate(branch_cols, start=1):
+            value = row.get(col_name, "")
+
+            if "Amount" in col_name and col_name != "Amount %":
+                try:
+                    value = format_inr(float(value)) if pd.notna(value) else "-"
+                except (TypeError, ValueError):
+                    value = ""
+
+            cell = ws.cell(row=current_row, column=idx, value=value)
+            cell.font = GRAND_FONT if is_grand else BODY_FONT
+            cell.border = BORDER
+
+            if col_name == "Branch":
+                cell.alignment = LEFT
+            elif "%" in col_name:
+                cell.alignment = CENTER
+            elif "Count" in col_name or "Amount" in col_name:
+                cell.alignment = RIGHT
+            else:
+                cell.alignment = CENTER
+
+            if is_grand:
+                cell.fill = GRAND_FILL
+            elif i % 2 == 1:
+                cell.fill = ALT_FILL
+        current_row += 1
+
+    # Blank spacer row
+    current_row += 1
+
+    # EMPLOYEE-WISE DETAILS
+    ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
+    c = ws.cell(row=current_row, column=1, value="EMPLOYEE-WISE DETAILS")
+    c.font = SEC_FONT
+    c.fill = SECTION_FILL
+    c.alignment = CENTER
+    ws.row_dimensions[current_row].height = 22
+    current_row += 1
+
+    # Employee header
+    header_row_emp = current_row
+    for idx, col_name in enumerate(employee_cols, start=1):
+        cell = ws.cell(row=header_row_emp, column=idx, value=col_name)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = CENTER
+        cell.border = BORDER
+    ws.row_dimensions[header_row_emp].height = 32
+    current_row += 1
+
+    # Employee data
+    for i, (_, row) in enumerate(employee_df.iterrows()):
+        for idx, col_name in enumerate(employee_cols, start=1):
+            value = row.get(col_name, "")
+
+            if "Amount" in col_name and col_name != "Amount %":
+                try:
+                    value = format_inr(float(value)) if pd.notna(value) else "-"
+                except (TypeError, ValueError):
+                    value = ""
+
+            cell = ws.cell(row=current_row, column=idx, value=value)
+            cell.font = BODY_FONT
+            cell.border = BORDER
+
+            if col_name in ("Branch", "Employee Code", "Referral Code"):
+                cell.alignment = LEFT
+            elif "Count" in col_name or "Amount" in col_name:
+                cell.alignment = RIGHT
+            else:
+                cell.alignment = CENTER
+
+            if i % 2 == 1:
+                cell.fill = ALT_FILL
+        current_row += 1
+
+    # Employee Grand Total
+    # Always calculate from the employee rows actually supplied to this export,
+    # so branch/date/employee filters are reflected in the downloaded report.
+    if len(employee_df) > 0:
+        employee_total = {
+            "Branch": "Grand Total",
+            "Employee Code": "",
+            "Referral Code": "",
+        }
+        for col_name in employee_cols:
+            if col_name in ("Branch", "Employee Code", "Referral Code"):
+                continue
+            if "Count" in col_name or ("Amount" in col_name and col_name != "Amount %"):
+                employee_total[col_name] = pd.to_numeric(
+                    employee_df[col_name], errors="coerce"
+                ).fillna(0).sum() if col_name in employee_df.columns else 0
+
+        current_row += 1
+        for idx, col_name in enumerate(employee_cols, start=1):
+            value = employee_total.get(col_name, "")
+            if "Amount" in col_name and col_name != "Amount %":
+                value = format_inr(float(value)) if pd.notna(value) else "-"
+            cell = ws.cell(row=current_row, column=idx, value=value)
+            cell.font = GRAND_FONT
+            cell.fill = GRAND_FILL
+            cell.border = BORDER
+            if col_name == "Branch":
+                cell.alignment = LEFT
+            elif "Count" in col_name or "Amount" in col_name:
+                cell.alignment = RIGHT
+            else:
+                cell.alignment = CENTER
+
+    # Column widths
+    for idx in range(1, n_cols + 1):
+        col_letter = get_column_letter(idx)
+        if idx == 1:
+            ws.column_dimensions[col_letter].width = 32
+        else:
+            ws.column_dimensions[col_letter].width = 14
+
+    ws.freeze_panes = "A7"
+
+    if output is None:
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return output
+    else:
+        wb.save(output)
+        return output
 
 
-def run():
-    warnings.filterwarnings("ignore")
-    st.title("💰 Scheme Enrollment & Collection Report")
-    st.caption("Strict Match: Referee Phone + Joined Date + Enrollment Amount + Installment #1")
-    REQUIRED_COLUMNS = [
-        "Id", "Scheme Participation Id", "Date", "Status", "Saved Amount",
-        "Reward Amount", "Transaction Reference", "Installment number",
-        "Metal Type", "Metal Rate", "Saved Metal Weight", "Rewards Metal Weight",
-        "Benefit Metal Amount", "Benefit Metal Weight", "Benefit Metal Percentage",
-        "Receipt ID", "Customer Name", "Customer Phone Number",
-        "Passbook number", "Scheme Name"
-    ]
-    DAILY_SCHEME_KEYS = [
-        "e-gold", "egold", "e gold",
-        "e-silver", "esilver", "e silver",
-    ]
-    BRANCH_MAPPING = {
-        "bhima jewellery - madurai": "MDU",
-        "head office": "MDU",
-        "madurai branch": "MDU",
-        "bhima jewellery - telecaller": "MDU-Telecalling",
-        "bhima jewellery - marthandam": "MDM",
-        "bhima jewellery - salem": "SLM",
-        "app showroom location": "SLM",
-        "in-transit- locations": "SLM",
-        "in-transit locations": "SLM",
-        "n/a": "Unassigned",
-        "bhima jewellery - tirunelveli": "TVL",
-        "bhima jewellery - tiruchirappalli": "TCY",
-        "trichy branch": "TCY",
-        "bhima jewellery -  rajapalayam": "RJPM",
-        "bhima jewellery - rajapalayam": "RJPM",
-        "rajapalayam branch": "RJPM",
-        "bhima jewellery - dindigul": "DGL",
-        "dindigul branch": "DGL",
-        "bhima jewellery - noida": "ND",
-        "bhima jewellery - virudhunagar": "VNR",
-        "bhima jewellery -anna nagar": "AN",
-        "bhima jewellery - anna nagar": "AN",
-        "bhima jewellery - thanjavur": "TJR",
-        "bhima jewellery -thanjavur": "TJR",
-    }
-    BRANCH_ORDER = [
-        "MDU", "MDM", "SLM", "TVL", "TCY", "RJPM",
-        "DGL", "ND", "VNR", "TJR", "AN", "MDU-Telecalling",
-        "Unassigned",
-    ]
-    FIXED_BRANCH_GROUPS = [
-        ["madurai"], ["marthandam"], ["salem"], ["tirunelveli"],
-        ["trichy", "tiruchirappalli", "tiruchirapalli"],
-        ["rajapalayam", "rajapalaiyam", "rajapalayem"],
-        ["dindigul"], ["noida"], ["virudhunagar", "virudunagar"], ["thanjavur"],
-    ]
-    TELECALLER_KEYWORDS = ["telecaller", "tele caller", "tellecaller"]
-    st.sidebar.header("📂 File Uploads")
-    uploaded_file = st.sidebar.file_uploader(
-        "1️⃣ Main Transaction File (Required)",
-        type=["xlsx", "xls", "csv"], key="main_file"
-    )
-    uploaded_employee = st.sidebar.file_uploader(
-        "2️⃣ Employee Details File (For Referral Report)",
-        type=["xlsx", "xls", "csv"], key="employee_file"
-    )
-    uploaded_referral = st.sidebar.file_uploader(
-        "3️⃣ Referral Details File (For Referral Report)",
-        type=["xlsx", "xls", "csv"], key="referral_file"
-    )
-    if uploaded_file is None:
-        st.info("Please upload your raw transaction Excel/CSV file (1️⃣) from the sidebar.")
-        st.stop()
+def create_excel_report(final_report, generator, duplicates_df=None, duplicate_indices=None, start_date=None, end_date=None, selected_branches=None, selected_employee_names=None):
+    """Create the master Excel file (all reports) with duplicate highlighting."""
+    excel_buffer = io.BytesIO()
+
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+
+    def style_header_and_widths(ws, df):
+        if ws.max_row == 0 or ws.max_column == 0:
+            return
+        for col_idx in range(1, ws.max_column + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.freeze_panes = "A2"
+        for i, col in enumerate(df.columns, start=1):
+            try:
+                sample = df[col].astype(str).head(200)
+                max_len = max([len(str(col))] + [len(v) for v in sample])
+            except Exception:
+                max_len = len(str(col))
+            ws.column_dimensions[get_column_letter(i)].width = min(max(max_len + 2, 10), 45)
+
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        final_report_for_excel = final_report.reset_index(drop=False)
+        original_index_col = final_report_for_excel.columns[0]
+        final_report_for_excel = final_report_for_excel.drop(columns=[original_index_col])
+        final_report_for_excel.to_excel(writer, sheet_name='Consolidated Report', index=False)
+        style_header_and_widths(writer.sheets['Consolidated Report'], final_report_for_excel)
+
+        if duplicate_indices and len(duplicate_indices) > 0:
+            positions = final_report.index.get_indexer(list(duplicate_indices))
+            valid_positions = [p for p in positions if p != -1]
+            if valid_positions:
+                excel_rows = [p + 2 for p in valid_positions]
+                generator.apply_duplicate_highlighting(writer.book, excel_rows, 'Consolidated Report')
+
+        if duplicates_df is not None and len(duplicates_df) > 0:
+            present_indices = set(final_report.index)
+            filtered_duplicates = duplicates_df[
+                duplicates_df['Duplicate Row Index'].isin(present_indices) |
+                duplicates_df['Original Row Index'].isin(present_indices)
+            ].copy()
+
+            if len(filtered_duplicates) > 0:
+                filtered_duplicates.to_excel(writer, sheet_name='Duplicate Records', index=False)
+                style_header_and_widths(writer.sheets['Duplicate Records'], filtered_duplicates)
+                st.info(f"📊 Added 'Duplicate Records' sheet with {len(filtered_duplicates)} duplicate entries")
+            else:
+                empty_dup_df = pd.DataFrame({'Note': ['No duplicate records in the filtered date range']})
+                empty_dup_df.to_excel(writer, sheet_name='Duplicate Records', index=False)
+
+        filter_info = {
+            'Report Generated On': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
+            'Date Filter Applied': [f"{start_date} to {end_date}" if start_date and end_date else "No Filter"],
+            'Total Records in Report': [len(final_report)],
+            'Total Enrollment Amount': [format_inr(final_report['Customer Enrollment Amount'].sum()) if 'Customer Enrollment Amount' in final_report.columns else "-"],
+            'Total Payment Received': [format_inr(final_report['Customer Payment'].sum()) if 'Customer Payment' in final_report.columns else "-"],
+        }
+        filter_df = pd.DataFrame(filter_info)
+        filter_df.to_excel(writer, sheet_name='Report Info', index=False)
+        style_header_and_widths(writer.sheets['Report Info'], filter_df)
+
+        sheet_specs = [
+            ('Branch-wise Scheme', generator.generate_branch_wise_scheme_report(final_report)),
+            ('Branch-Employee Scheme', generator.generate_branch_employee_wise_scheme_report(final_report)),
+            ('Branch Summary', generator.generate_branch_summary_report(final_report)),
+            ('Employee Performance', generator.generate_employee_performance_report(final_report)),
+        ]
+        for sheet_name, df in sheet_specs:
+            if len(df) > 0:
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+                style_header_and_widths(writer.sheets[sheet_name], df)
+
+        reg_pivot, not_enrolled = generator.generate_registration_analysis_report(final_report)
+        if len(reg_pivot) > 0:
+            reg_pivot.to_excel(writer, sheet_name='Registration Analysis', index=False)
+            style_header_and_widths(writer.sheets['Registration Analysis'], reg_pivot)
+        if len(not_enrolled) > 0:
+            not_enrolled.to_excel(writer, sheet_name='Not Enrolled Customers', index=False)
+            style_header_and_widths(writer.sheets['Not Enrolled Customers'], not_enrolled)
+
+        branch_ref, employee_ref, referral_schemes = generator.generate_branch_employee_referral_report(final_report, start_date, end_date)
+
+        # Apply the SAME branch/employee filters used on screen to the
+        # "Download All Reports" workbook.
+        if selected_branches is not None and len(selected_branches) > 0:
+            branch_ref = branch_ref[
+                branch_ref['Branch'].isin(selected_branches) |
+                (branch_ref['Branch'].astype(str).str.strip().str.lower() == 'grand total')
+            ].copy()
+            employee_ref = employee_ref[employee_ref['Branch'].isin(selected_branches)].copy()
+
+        if selected_employee_names:
+            employee_ref = employee_ref[employee_ref['Employee Name'].isin(selected_employee_names)].copy()
+
+        if len(branch_ref) > 0:
+            # Recompute branch grand total after branch filtering.
+            branch_data = branch_ref[
+                branch_ref['Branch'].astype(str).str.strip().str.lower() != 'grand total'
+            ].copy()
+            if len(branch_data) > 0:
+                branch_gt = {'Branch': 'Grand Total', 'Count %': '100%', 'Amount %': '100%'}
+                for col in branch_data.columns:
+                    if col == 'Branch' or col in ('Count %', 'Amount %'):
+                        continue
+                    if 'Count' in col or 'Amount' in col:
+                        branch_gt[col] = pd.to_numeric(branch_data[col], errors='coerce').fillna(0).sum()
+                branch_ref = pd.concat([branch_data, pd.DataFrame([branch_gt])], ignore_index=True)
+            branch_ref.to_excel(writer, sheet_name='Branch Referral Summary', index=False)
+            style_header_and_widths(writer.sheets['Branch Referral Summary'], branch_ref)
+
+        if len(employee_ref) > 0:
+            employee_ref.to_excel(writer, sheet_name='Employee Referral Details', index=False)
+            style_header_and_widths(writer.sheets['Employee Referral Details'], employee_ref)
+
+    return excel_buffer
+
+
+def get_week_number(date):
+    if pd.isna(date):
+        return None
     try:
-        if uploaded_file.name.lower().endswith(".csv"):
-            df = pd.read_csv(uploaded_file, low_memory=False)
-        else:
-            df = pd.read_excel(uploaded_file)
-    except Exception as e:
-        st.error(f"❌ Error reading file: {e}")
-        st.stop()
-    df = clean_columns(df)
-    missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
-    if missing_columns:
-        st.error("❌ Required columns are missing.")
-        st.write("Missing columns:", missing_columns)
-        st.stop()
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
-    df["Saved Amount"] = clean_amount(df["Saved Amount"])
-    df["Metal Rate"] = clean_amount(df["Metal Rate"])
-    df["Installment number"] = pd.to_numeric(df["Installment number"], errors="coerce")
-    df["Passbook number"] = clean_text(df["Passbook number"])
-    df["Scheme Name"] = clean_text(df["Scheme Name"])
-    df["Customer Phone Number"] = clean_text(df["Customer Phone Number"])
-    df["Customer Name"] = clean_text(df["Customer Name"])
-    df = df[df["Date"].notna()].copy()
-    if df.empty:
-        st.error("❌ No valid Date records found.")
-        st.stop()
-    df["Date"] = df["Date"].dt.normalize()
-    rows_before = len(df)
-    df = df[df["Scheme Name"].notna()].copy()
-    if rows_before - len(df) > 0:
-        st.sidebar.warning(f"⚠️ Skipped {rows_before - len(df)} row(s) with a blank 'Scheme Name'.")
-    df["Scheme"] = df["Scheme Name"].astype(str).str.strip()
-    st.sidebar.header("🔎 Report Filters")
-    minimum_date = df["Date"].min().date()
-    maximum_date = df["Date"].max().date()
-    date_range = st.sidebar.date_input(
-        "Date Range", value=(minimum_date, maximum_date),
-        min_value=minimum_date, max_value=maximum_date
-    )
-    if isinstance(date_range, tuple):
-        if len(date_range) == 2:
-            start_date = pd.Timestamp(date_range[0])
-            end_date = pd.Timestamp(date_range[1])
-        else:
-            start_date = pd.Timestamp(date_range[0])
-            end_date = start_date
+        date_obj = pd.to_datetime(date)
+        return f"{date_obj.year}-W{date_obj.isocalendar()[1]:02d}"
+    except Exception:
+        return None
+
+
+def get_month_name(date):
+    if pd.isna(date):
+        return None
+    try:
+        return pd.to_datetime(date).strftime('%B %Y')
+    except Exception:
+        return None
+
+
+def format_inr_compact(value):
+    if pd.isna(value):
+        return "₹0"
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return "₹0"
+
+    negative = value < 0
+    value = abs(value)
+    sign = "-" if negative else ""
+
+    if value >= 1_00_00_000:
+        return f"{sign}₹{value/1_00_00_000:.2f} Cr"
+    elif value >= 1_00_000:
+        return f"{sign}₹{value/1_00_000:.2f} L"
+    elif value >= 1_000:
+        return f"{sign}₹{value/1_000:.1f} K"
     else:
-        start_date = pd.Timestamp(date_range)
-        end_date = start_date
-    all_schemes = get_scheme_list(df)
-    selected_schemes = st.sidebar.multiselect("Select Schemes", options=all_schemes, default=all_schemes)
-    filtered_df = df.copy()
-    filtered_df = filtered_df[(filtered_df["Date"] >= start_date) & (filtered_df["Date"] <= end_date)].copy()
-    filtered_df = filtered_df[filtered_df["Scheme"].isin(selected_schemes)].copy()
-    filtered_df = filtered_df.sort_values(["Passbook number", "Date", "Id"])
-    if filtered_df.empty:
-        st.warning("⚠️ No records found for the selected filters.")
+        return f"{sign}₹{value:.0f}"
+
+
+def format_currency(value):
+    if pd.isna(value) or value == 0:
+        return "-"
+    return f"₹{format_inr(value)}"
+
+
+def render_dashboard(display_report):
+    if len(display_report) == 0:
+        st.info("ℹ️ No data available for the current filter selection.")
+        return
+
+    non_dup = display_report[display_report['Is Duplicate'] == False] if 'Is Duplicate' in display_report.columns else display_report
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+    total_customers = len(non_dup)
+    total_enrollment = non_dup['Customer Enrollment Amount'].sum()
+    total_payment = non_dup['Customer Payment'].sum()
+    matched = non_dup['True/False'].sum() if 'True/False' in non_dup.columns else 0
+    not_enrolled = non_dup['Not Enrolled'].sum() if 'Not Enrolled' in non_dup.columns else 0
+
+    col1.metric("Total Customers", f"{total_customers:,}")
+    col2.metric("Total Enrollment", format_inr_compact(total_enrollment))
+    col3.metric("Total Payments", format_inr_compact(total_payment))
+    col4.metric("Match Rate", f"{(matched/total_customers*100) if total_customers else 0:.1f}%")
+    col5.metric("Not Enrolled", f"{int(not_enrolled):,}")
+
+    st.markdown("---")
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        st.markdown("#### 📈 Enrollment Trend Over Time")
+        trend_data = non_dup.dropna(subset=['Updated Date']).copy()
+        if len(trend_data) > 0:
+            trend_data['Updated Date'] = pd.to_datetime(trend_data['Updated Date'])
+            daily = trend_data.groupby(trend_data['Updated Date'].dt.date).agg(
+                Customers=('Customer Name', 'count'),
+                Amount=('Customer Enrollment Amount', 'sum')
+            ).reset_index()
+            fig = px.line(daily, x='Updated Date', y='Customers', markers=True,
+                          title=None, labels={'Updated Date': 'Date', 'Customers': 'Customers'})
+            fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No dated records to chart.")
+
+    with chart_col2:
+        st.markdown("#### 🏷️ Category Distribution")
+        if 'Category' in non_dup.columns and len(non_dup) > 0:
+            cat_counts = non_dup['Category'].value_counts().reset_index()
+            cat_counts.columns = ['Category', 'Count']
+            fig = px.pie(cat_counts, names='Category', values='Count', hole=0.45)
+            fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No category data available.")
+
+    chart_col3, chart_col4 = st.columns(2)
+
+    with chart_col3:
+        st.markdown("#### 🏢 Top 10 Branches by Customers")
+        if 'Branch' in non_dup.columns and len(non_dup) > 0:
+            branch_counts = non_dup['Branch'].value_counts().head(10).reset_index()
+            branch_counts.columns = ['Branch', 'Customers']
+            fig = px.bar(branch_counts, x='Customers', y='Branch', orientation='h')
+            fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360, yaxis={'categoryorder': 'total ascending'})
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No branch data available.")
+
+    with chart_col4:
+        st.markdown("#### ⭐ Top 10 Employees by Enrollment Amount")
+        if 'Employee Name' in non_dup.columns and len(non_dup) > 0:
+            top_emp = non_dup.groupby('Employee Name')['Customer Enrollment Amount'].sum().sort_values(ascending=False).head(10).reset_index()
+            fig = px.bar(top_emp, x='Customer Enrollment Amount', y='Employee Name', orientation='h')
+            fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360, yaxis={'categoryorder': 'total ascending'})
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No employee data available.")
+
+
+def main():
+    st.set_page_config(
+        page_title="Report Generator System",
+        layout="wide",
+        page_icon="📊",
+        initial_sidebar_state="expanded"
+    )
+
+    st.markdown("""
+    <style>
+    .main-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 1.5rem; border-radius: 15px; color: white; text-align: center;
+        margin-bottom: 2rem; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .main-header h1 { margin: 0; font-size: 2rem; font-weight: 600; }
+    .main-header p { margin: 0.5rem 0 0 0; opacity: 0.9; }
+    .metric-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 1rem; border-radius: 10px; text-align: center; color: white;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .metric-card h3 { margin: 0; font-size: 0.9rem; opacity: 0.9; }
+    .metric-card .value { font-size: 1.8rem; font-weight: bold; margin: 0.5rem 0; }
+    .success-box { background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%); padding: 1rem; border-radius: 10px; margin: 1rem 0; }
+    .warning-box { background: linear-gradient(135deg, #ffe259 0%, #ffa751 100%); padding: 1rem; border-radius: 10px; margin: 1rem 0; }
+    .info-box { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); padding: 1rem; border-radius: 10px; margin: 1rem 0; }
+    .error-box { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 1rem; border-radius: 10px; margin: 1rem 0; color: white; }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: #f8f9fa; padding: 0.5rem; border-radius: 10px; }
+    .stTabs [data-baseweb="tab"] { border-radius: 8px; padding: 0.5rem 1rem; font-weight: 500; }
+    .stTabs [aria-selected="true"] { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white !important; }
+    .stButton > button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; font-weight: 500; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="main-header">
+        <h1>📊 Automated Report Generator</h1>
+        <p>Generate consolidated reports from Employees, Referrals, Transactions, and BSS Joining data</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.sidebar:
+        st.markdown("### 📁 Upload Files")
+        employees_file = st.file_uploader("Employees Report *", type=['xlsx', 'xls', 'csv'], key="emp_file")
+        referrals_file = st.file_uploader("Referrals Report *", type=['xlsx', 'xls', 'csv'], key="ref_file")
+        transactions_file = st.file_uploader("Transactions Report *", type=['xlsx', 'xls', 'csv'], key="trans_file")
+        bss_file = st.file_uploader("BSS Joining Report (optional)", type=['xlsx', 'xls', 'csv'], key="bss_file")
+        st.caption("* Required files")
+
+    if not (employees_file and referrals_file and transactions_file):
+        st.markdown("""
+        <div class="info-box">
+            👈 <strong>Getting Started</strong><br>
+            Please upload all three required files (Employees, Referrals, and Transactions reports) in the sidebar to generate the consolidated report.
+            The BSS Joining Report is optional but recommended for better matching accuracy.
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    try:
+        with st.spinner("📂 Validating files..."):
+            emp_preview = cached_read_file(employees_file)
+            ref_preview = cached_read_file(referrals_file)
+            trans_preview = cached_read_file(transactions_file)
+            bss_preview = cached_read_file(bss_file) if bss_file else None
+    except Exception as e:
+        st.markdown(f'<div class="error-box">❌ Could not read one of the uploaded files: {str(e)}</div>', unsafe_allow_html=True)
+        st.info("💡 Make sure the files are valid .xlsx, .xls, or .csv files and are not password-protected.")
+        return
+
+    has_joined_or_registered = 'Joined Date' in ref_preview.columns or 'Registered Date' in ref_preview.columns
+    validation_issues = {}
+    for label, df, cols in [
+        ("Employees Report", emp_preview, REQUIRED_COLUMNS["Employees Report"]),
+        ("Referrals Report", ref_preview, REQUIRED_COLUMNS["Referrals Report"]),
+        ("Transactions Report", trans_preview, REQUIRED_COLUMNS["Transactions Report"]),
+    ]:
+        missing = validate_columns(df, cols, label)
+        if not has_joined_or_registered and label == "Referrals Report":
+            missing.append("Joined Date OR Registered Date")
+        if missing:
+            validation_issues[label] = missing
+    if bss_preview is not None:
+        missing = validate_columns(bss_preview, REQUIRED_COLUMNS["BSS Joining Report (optional)"], "BSS Joining Report")
+        if missing:
+            validation_issues["BSS Joining Report (optional)"] = missing
+
+    if validation_issues:
+        st.markdown('<div class="error-box">❌ Some required columns are missing. Please check your files:</div>', unsafe_allow_html=True)
+        for label, missing in validation_issues.items():
+            st.warning(f"**{label}** is missing: {', '.join(missing)}")
         st.stop()
-    daily_schemes = [s for s in selected_schemes if classify_scheme_type(s) == "daily"]
-    daily_df = filtered_df[filtered_df["Scheme"].isin(daily_schemes)].copy()
-    sessional_schemes = [s for s in selected_schemes if classify_scheme_type(s) == "sessional"]
-    sessional_df = filtered_df[filtered_df["Scheme"].isin(sessional_schemes)].copy()
-    with st.spinner("Crunching daily-scheme numbers..."):
-        daily_summary, daily_enrollment, daily_collection, daily_unique, daily_avg_ticket = generate_report_data(
-            daily_df, daily_schemes
-        )
-    with st.spinner("Crunching sessional-scheme numbers..."):
-        sessional_summary, sessional_enrollment, sessional_collection, sessional_unique, sessional_avg_ticket = generate_report_data(
-            sessional_df, sessional_schemes
-        )
-    daily_enrollment_projection, daily_collection_projection, daily_projection_label = generate_monthly_projection(
-        df, daily_schemes
-    )
-    sessional_enrollment_projection, sessional_collection_projection, sessional_projection_label = generate_monthly_projection(
-        df, sessional_schemes
-    )
-    referral_summary = pd.DataFrame()
-    referral_daily_list = []
-    referral_detail = pd.DataFrame()
-    referral_diagnostics = {}
-    referral_duplicates = pd.DataFrame()
-    referral_debug = {}
-    employee_df_raw = None
-    referral_df_raw = None
-    referral_files_present = uploaded_employee is not None and uploaded_referral is not None
-    if referral_files_present:
-        employee_df_raw = read_uploaded_file(uploaded_employee)
-        referral_df_raw = read_uploaded_file(uploaded_referral)
 
-        if employee_df_raw is not None and referral_df_raw is not None:
-            with st.spinner("Matching referrals (strict: phone + joined date + amount)..."):
-                referral_summary, referral_daily_list, referral_detail, referral_diagnostics, referral_duplicates, referral_debug = \
-                    build_referral_report(
-                        filtered_df, employee_df_raw, referral_df_raw, None,
-                        start_date=start_date, end_date=end_date
-                    )
+    try:
+        with st.spinner("🔄 Generating consolidated report..."):
+            result = cached_generate_pipeline(employees_file, referrals_file, transactions_file, bss_file)
 
-            if referral_diagnostics:
-                st.info(
-                    f"📊 **Referral Match Summary:** "
-                    f"{referral_diagnostics.get('matched_referrals', 0)} matched / "
-                    f"{referral_diagnostics.get('total_referrals', 0)} total "
-                    f"(**{referral_diagnostics.get('not_enrolled', 0)}** not enrolled)"
-                    + (f" — **{referral_diagnostics.get('duplicates', 0)}** duplicate(s) flagged"
-                       if referral_diagnostics.get('duplicates') else "")
-                )
-    if referral_files_present and referral_debug:
-        st.header("🧪 Debug — Match Analysis")
+        if result is None:
+            st.markdown('<div class="error-box">❌ Failed to generate report. Please check your data.</div>', unsafe_allow_html=True)
+            return
 
-        with st.expander("📊 Referral Funnel", expanded=True):
+        final_report = result["final_report"]
+        duplicates_df = result["duplicates_df"]
+        duplicate_indices = result["duplicate_indices"]
+        non_duplicate_report = result["non_duplicate_report"]
+        generator = ReportGenerator(result["employees_df"], result["referrals_df"], result["transactions_df"], result["bss_df"])
+
+        st.markdown('<div class="success-box">✅ Report generated successfully!</div>', unsafe_allow_html=True)
+
+        if len(duplicates_df) > 0:
+            st.markdown(f"""
+            <div class="warning-box">
+                ⚠️ <strong>Duplicates Found:</strong> {len(duplicates_df)} duplicate records detected in {len(duplicates_df['Group ID'].unique())} groups.
+                <br><br>
+                <strong>✅ ORIGINAL RECORDS KEPT</strong> - Only original records are used in all reports (except Consolidated Report).
+                <br><br>
+                <strong>🔴 HIGHLIGHTED IN PINK</strong> - Duplicate rows are highlighted in pink in the Consolidated Report sheet.
+                <br><br>
+                <strong>📋 DUPLICATE RECORDS SHEET</strong> - A separate sheet shows original vs duplicate comparison.
+                <br><br>
+                <strong>⚠️ DUPLICATES EXCLUDED</strong> - All other sheets (Branch-wise, Employee Performance, etc.) EXCLUDE duplicate records for accurate calculations.
+            </div>
+            """, unsafe_allow_html=True)
+
+            with st.expander("📋 Preview Duplicate Records (Original vs Duplicate)"):
+                st.dataframe(duplicates_df, width='stretch')
+
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Raw referral rows", f"{referral_debug.get('referral_raw_count', 0):,}")
+                st.metric("Total Duplicate Groups", len(duplicates_df['Group ID'].unique()))
             with col2:
-                st.metric("After date filter", f"{referral_debug.get('referral_after_date_filter', 0):,}")
+                st.metric("Total Duplicate Records", len(duplicates_df))
             with col3:
-                st.metric("After phone filter", f"{referral_debug.get('referral_after_phone_filter', 0):,}")
+                st.metric("Total Records (All)", len(final_report))
             with col4:
-                st.metric("In scope for matching", f"{referral_debug.get('referrals_in_scope', 0):,}")
+                non_dup_count = len(final_report[final_report['Is Duplicate'] == False]) if 'Is Duplicate' in final_report.columns else len(final_report)
+                st.metric("Non-Duplicate Records", non_dup_count)
 
-            st.markdown("---")
+            st.markdown("#### 📊 Impact of Duplicates on Totals")
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Txn rows (installment 1)", f"{referral_debug.get('txn_f1_count', 0):,}")
+                all_enrollment = final_report['Customer Enrollment Amount'].sum()
+                non_dup_enrollment = non_duplicate_report['Customer Enrollment Amount'].sum() if len(non_duplicate_report) > 0 else 0
+                dup_enrollment = all_enrollment - non_dup_enrollment
+                st.metric("Enrollment Amount Impact", format_currency(dup_enrollment),
+                          delta=f"Duplicates add {dup_enrollment/all_enrollment*100:.1f}%" if all_enrollment else "0%")
             with col2:
-                st.metric("Unique txn phones", f"{referral_debug.get('txn_unique_phones', 0):,}")
+                all_payment = final_report['Customer Payment'].sum() if 'Customer Payment' in final_report.columns else 0
+                non_dup_payment = non_duplicate_report['Customer Payment'].sum() if len(non_duplicate_report) > 0 and 'Customer Payment' in non_duplicate_report.columns else 0
+                dup_payment = (all_payment - non_dup_payment) if pd.notna(all_payment) and pd.notna(non_dup_payment) else 0
+                st.metric("Payment Amount Impact", format_currency(dup_payment),
+                          delta=f"Duplicates add {dup_payment/all_payment*100:.1f}%" if all_payment else "0%")
             with col3:
-                st.metric("Phone overlap (ref ∩ txn)", f"{referral_debug.get('phone_overlap', 0):,}")
+                all_count = len(final_report)
+                non_dup_count2 = len(non_duplicate_report)
+                dup_count = all_count - non_dup_count2
+                st.metric("Record Count Impact", f"{dup_count} records",
+                          delta=f"{dup_count/all_count*100:.1f}% of total" if all_count else "0%")
+        else:
+            st.markdown('<div class="success-box">✅ No duplicate records found. All data is clean.</div>', unsafe_allow_html=True)
+            non_duplicate_report = final_report.copy()
 
-        with st.expander("📋 Not Enrolled Reason Breakdown"):
-            if referral_debug.get('not_enrolled_breakdown'):
-                st.dataframe(
-                    pd.DataFrame([
-                        {"Reason": k, "Count": v}
-                        for k, v in referral_debug['not_enrolled_breakdown'].items()
-                    ]),
-                    use_container_width=True, hide_index=True
+        st.markdown("---")
+        st.markdown("### 📅 Date Range Filter for Reports")
+        st.markdown("Apply filters to view data for specific time periods. **All reports will show ONLY filtered data.**")
+
+        col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+
+        if 'filter_start_date' not in st.session_state:
+            st.session_state.filter_start_date = None
+        if 'filter_end_date' not in st.session_state:
+            st.session_state.filter_end_date = None
+        if 'filter_applied' not in st.session_state:
+            st.session_state.filter_applied = False
+
+        with col1:
+            start_date = st.date_input("Start Date", value=st.session_state.filter_start_date, key="global_start_date")
+        with col2:
+            end_date = st.date_input("End Date", value=st.session_state.filter_end_date, key="global_end_date")
+        with col3:
+            if 'Updated Date' in final_report.columns:
+                final_report['Week Number'] = final_report['Updated Date'].apply(get_week_number)
+                unique_weeks = sorted([w for w in final_report['Week Number'].unique() if w is not None], reverse=True)
+                week_options = ['All'] + unique_weeks
+                selected_week = st.selectbox("Select Week", week_options, key="week_select")
+
+                if selected_week != 'All' and selected_week in unique_weeks:
+                    if st.session_state.get('_last_week_applied') != selected_week:
+                        week_data = final_report[final_report['Week Number'] == selected_week]
+                        if len(week_data) > 0:
+                            min_date = week_data['Updated Date'].min()
+                            max_date = week_data['Updated Date'].max()
+                            if pd.notna(min_date) and pd.notna(max_date):
+                                st.session_state.filter_start_date = min_date.date() if hasattr(min_date, 'date') else min_date
+                                st.session_state.filter_end_date = max_date.date() if hasattr(max_date, 'date') else max_date
+                                st.session_state._last_week_applied = selected_week
+                                st.session_state._last_month_applied = None
+                                st.rerun()
+        with col4:
+            if 'Updated Date' in final_report.columns:
+                final_report['Month Name'] = final_report['Updated Date'].apply(get_month_name)
+                unique_months = sorted([m for m in final_report['Month Name'].unique() if m is not None], reverse=True)
+                month_options = ['All'] + unique_months
+                selected_month = st.selectbox("Select Month", month_options, key="month_select")
+
+                if selected_month != 'All' and selected_month in unique_months:
+                    if st.session_state.get('_last_month_applied') != selected_month:
+                        month_data = final_report[final_report['Month Name'] == selected_month]
+                        if len(month_data) > 0:
+                            min_date = month_data['Updated Date'].min()
+                            max_date = month_data['Updated Date'].max()
+                            if pd.notna(min_date) and pd.notna(max_date):
+                                st.session_state.filter_start_date = min_date.date() if hasattr(min_date, 'date') else min_date
+                                st.session_state.filter_end_date = max_date.date() if hasattr(max_date, 'date') else max_date
+                                st.session_state._last_month_applied = selected_month
+                                st.session_state._last_week_applied = None
+                                st.rerun()
+
+        col5, col6 = st.columns([1, 1])
+        with col5:
+            if st.button("🔍 Apply Date Filter", width='content') and start_date and end_date:
+                st.session_state.filter_start_date = start_date
+                st.session_state.filter_end_date = end_date
+                st.session_state.filter_applied = True
+                st.rerun()
+        with col6:
+            if st.button("🗑️ Clear Filters", width='content'):
+                st.session_state.filter_start_date = None
+                st.session_state.filter_end_date = None
+                st.session_state.filter_applied = False
+                st.session_state._last_week_applied = None
+                st.session_state._last_month_applied = None
+                st.rerun()
+
+        filter_start_date = st.session_state.filter_start_date
+        filter_end_date = st.session_state.filter_end_date
+
+        if filter_start_date and filter_end_date:
+            filtered_data = final_report[
+                (pd.to_datetime(final_report['Updated Date']) >= pd.to_datetime(filter_start_date)) &
+                (pd.to_datetime(final_report['Updated Date']) <= pd.to_datetime(filter_end_date))
+            ].copy()
+            st.success(f"✅ Filter applied: {filter_start_date} to {filter_end_date} - Showing {len(filtered_data)} records")
+        else:
+            st.info("ℹ️ No date filter applied - showing all data")
+            filtered_data = final_report.copy()
+
+        st.markdown("---")
+
+        tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+            "🚀 **Dashboard**",
+            "📋 **Consolidated Report**",
+            "🏢 **Branch-wise Scheme**",
+            "👥 **Branch & Employee Scheme**",
+            "📊 **Branch Summary**",
+            "⭐ **Employee Performance**",
+            "📝 **Registration Analysis**",
+            "📈 **Branch & Employee Referral**"
+        ])
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        with tab0:
+            st.markdown("### 🚀 Overview Dashboard")
+            render_dashboard(filtered_data)
+
+        with tab1:
+            st.markdown("### 📈 Final Consolidated Report")
+            st.markdown("🔴 <span style='color:red;font-weight:bold'>PINK HIGHLIGHTED</span> rows are duplicate records (same Scheme Passbook Number & Employee Reference)", unsafe_allow_html=True)
+
+            search_term = st.text_input("🔎 Search by customer name, phone, or employee name", key="consolidated_search")
+
+            display_report = filtered_data.copy()
+            if search_term:
+                term = search_term.strip().lower()
+                mask = (
+                    display_report['Customer Name'].astype(str).str.lower().str.contains(term, na=False) |
+                    display_report['Customer Phone'].astype(str).str.lower().str.contains(term, na=False) |
+                    display_report['Employee Name'].astype(str).str.lower().str.contains(term, na=False)
                 )
+                display_report = display_report[mask]
+                st.caption(f"Showing {len(display_report):,} matching records")
 
-        with st.expander("🔍 Branch × Category Pivot (in-scope)"):
-            if not referral_detail.empty:
-                grp = referral_detail.groupby(['Branch', 'Category']).size().reset_index(name='Count')
-                pivot_dbg = grp.pivot(index='Branch', columns='Category', values='Count').fillna(0).astype(int)
-                st.dataframe(pivot_dbg, use_container_width=True)
+            total_cells = len(display_report) * len(display_report.columns)
+            use_styler = total_cells <= 250000
 
-        with st.expander("📋 Not Enrolled Rows (first 50)"):
-            if not referral_detail.empty:
-                ne = referral_detail[referral_detail['Category'] == 'Not Enrolled']
-                display_cols = ['Branch', 'Referee Name', 'Joined Date', 'Enrollment Amount',
-                                'Match Reason', 'Transaction Date', 'Paid Amount']
-                avail = [c for c in display_cols if c in ne.columns]
-                st.write(f"**Total Not Enrolled: {len(ne)}**")
-                st.dataframe(ne[avail].head(50), use_container_width=True, hide_index=True)
-    if referral_files_present:
-        if employee_df_raw is None or referral_df_raw is None:
-            st.error("❌ Could not read Employee or Referral file.")
-        else:
-            with st.expander("🔍 DIAGNOSTIC — Referral Data", expanded=False):
-                st.write("### 📌 Column Detection")
-                st.write("**Employee file columns:**", list(employee_df_raw.columns))
-                st.write("**Referral file columns:**", list(referral_df_raw.columns))
+            def highlight_duplicates(row):
+                if row.name in duplicate_indices:
+                    return ['background-color: #FFB6C1'] * len(row)
+                return [''] * len(row)
 
-                if not referral_detail.empty:
-                    st.write("### 📌 Category Breakdown")
-                    cs = referral_detail["Category"].value_counts().reset_index()
-                    cs.columns = ["Category", "Count"]
-                    st.dataframe(cs, use_container_width=True, hide_index=True)
+            if 'Duplicate Group' in display_report.columns and use_styler:
+                styled_df = display_report.style.apply(highlight_duplicates, axis=1)
+                st.dataframe(styled_df, width='stretch', height=400)
+            else:
+                if not use_styler and 'Duplicate Group' in display_report.columns:
+                    st.info(f"💡 Displaying {len(display_report):,} records without row highlighting for better performance")
+                st.dataframe(display_report, width='stretch', height=400)
 
-                    st.write("### 📌 Match Reason Breakdown")
-                    rs = referral_detail["Match Reason"].value_counts().reset_index()
-                    rs.columns = ["Reason", "Count"]
-                    st.dataframe(rs, use_container_width=True, hide_index=True)
+            st.markdown("### 📊 Report Statistics")
+            col1, col2, col3, col4, col5, col6 = st.columns(6)
 
-                    if referral_diagnostics.get("duplicates", 0) > 0 and not referral_duplicates.empty:
-                        st.write("### 📌 Duplicate Records")
-                        st.dataframe(referral_duplicates, use_container_width=True, hide_index=True)
-    st.header("📋 Formatted Report Preview")
-    if daily_schemes and not daily_summary.empty:
-        st.subheader("📅 Daily Schemes (e-Gold & e-Silver)")
-        st.dataframe(daily_summary, use_container_width=True, hide_index=True)
-        if not daily_avg_ticket.empty:
-            display_avg_ticket_comparison(daily_avg_ticket)
-        if not daily_enrollment_projection.empty or not daily_collection_projection.empty:
-            st.markdown(f"**📈 Monthly Projection — {daily_projection_label}**")
-            c5, c6 = st.columns(2)
-            with c5:
-                st.caption("Projection — first enrollments")
-                st.dataframe(daily_enrollment_projection, use_container_width=True, hide_index=True)
-            with c6:
-                st.caption("Projection — overall collection")
-                st.dataframe(daily_collection_projection, use_container_width=True, hide_index=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.dataframe(daily_enrollment, use_container_width=True, hide_index=True)
-        with c2:
-            st.dataframe(daily_collection, use_container_width=True, hide_index=True)
-        st.dataframe(daily_unique, use_container_width=True, hide_index=True)
-    if sessional_schemes and not sessional_summary.empty:
-        st.subheader("🎯 Sessional Schemes")
-        st.dataframe(sessional_summary, use_container_width=True, hide_index=True)
-        if not sessional_avg_ticket.empty:
-            display_avg_ticket_comparison(sessional_avg_ticket)
-        if not sessional_enrollment_projection.empty or not sessional_collection_projection.empty:
-            st.markdown(f"**📈 Monthly Projection — {sessional_projection_label}**")
-            c5, c6 = st.columns(2)
-            with c5:
-                st.caption("Projection — first enrollments")
-                st.dataframe(sessional_enrollment_projection, use_container_width=True, hide_index=True)
-            with c6:
-                st.caption("Projection — overall collection")
-                st.dataframe(sessional_collection_projection, use_container_width=True, hide_index=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.dataframe(sessional_enrollment, use_container_width=True, hide_index=True)
-        with c2:
-            st.dataframe(sessional_collection, use_container_width=True, hide_index=True)
-        st.dataframe(sessional_unique, use_container_width=True, hide_index=True)
-    if referral_files_present:
-        st.header("🎁 Referral Conversion Report")
-        if referral_summary.empty:
-            st.warning("⚠️ No referral matches found. Check the debug panel above.")
-        else:
-            st.subheader(
-                f"🏢 Branch-wise Referral Summary — "
-                f"{start_date.strftime('%d-%m-%Y')} to {end_date.strftime('%d-%m-%Y')}"
+            with col1:
+                st.markdown('<div class="metric-card"><h3>Total Records</h3><div class="value">{:,}</div></div>'.format(len(display_report)), unsafe_allow_html=True)
+            with col2:
+                total_amount = display_report['Customer Enrollment Amount'].sum()
+                st.markdown('<div class="metric-card"><h3>Total Enrollment Amount</h3><div class="value">{}</div></div>'.format(format_currency(total_amount) if pd.notna(total_amount) else "₹0.00"), unsafe_allow_html=True)
+            with col3:
+                total_payment = display_report['Customer Payment'].sum()
+                st.markdown('<div class="metric-card"><h3>Total Payments</h3><div class="value">{}</div></div>'.format(format_currency(total_payment) if pd.notna(total_payment) else "₹0.00"), unsafe_allow_html=True)
+            with col4:
+                matched = display_report['True/False'].sum() if 'True/False' in display_report.columns else 0
+                st.markdown('<div class="metric-card"><h3>Matched Records</h3><div class="value">{:,}</div></div>'.format(int(matched)), unsafe_allow_html=True)
+            with col5:
+                match_percent = (matched / len(display_report) * 100) if len(display_report) > 0 else 0
+                st.markdown('<div class="metric-card"><h3>Match Rate</h3><div class="value">{:.2f}%</div></div>'.format(match_percent), unsafe_allow_html=True)
+            with col6:
+                not_enrolled = display_report['Not Enrolled'].sum() if 'Not Enrolled' in display_report.columns else 0
+                st.markdown('<div class="metric-card"><h3>Not Enrolled</h3><div class="value">{:,}</div></div>'.format(int(not_enrolled)), unsafe_allow_html=True)
+
+            st.markdown("#### 💾 Download This Report")
+            csv_buffer = io.StringIO()
+            display_report.to_csv(csv_buffer, index=False)
+            st.download_button(
+                label="📥 Download Consolidated Report (CSV)",
+                data=csv_buffer.getvalue(),
+                file_name=f"consolidated_report_{timestamp}.csv",
+                mime="text/csv",
+                width='content'
             )
-            display_summary = referral_summary.copy()
-            for col in display_summary.columns[1:]:
-                display_summary[col] = display_summary[col].apply(
-                    lambda x: "-" if (isinstance(x, (int, float)) and x == 0) else x
-                )
-            st.dataframe(display_summary, use_container_width=True, hide_index=True)
 
-            if referral_daily_list:
-                st.subheader("📅 Daily Referral Breakdown")
-                for date_label, day_df in referral_daily_list:
-                    st.markdown(f"**Referral — {date_label}**")
-                    day_display = day_df.copy()
-                    for col in day_display.columns[1:]:
-                        day_display[col] = day_display[col].apply(
-                            lambda x: "-" if (isinstance(x, (int, float)) and x == 0) else x
+        with tab2:
+            st.markdown("### 🏢 Branch-wise Scheme Consolidation Report")
+            st.info("📊 **Note:** This report EXCLUDES duplicate records for accurate calculations. All branches (including zero-referral branches) are listed in the fixed branch order, with Telecaller last.")
+            branch_scheme_report = generator.generate_branch_wise_scheme_report(filtered_data)
+
+            if len(branch_scheme_report) > 0:
+                col1, col2 = st.columns(2)
+                with col1:
+                    branches = ['All'] + list(dict.fromkeys(branch_scheme_report['Branch'].tolist()))
+                    selected_branch = st.selectbox("🏢 Filter by Branch", branches, key="branch_scheme_filter")
+                with col2:
+                    schemes = ['All'] + sorted(branch_scheme_report['Scheme Name'].unique().tolist())
+                    selected_scheme = st.selectbox("📋 Filter by Scheme", schemes, key="scheme_filter")
+
+                filtered_report_data = branch_scheme_report.copy()
+                if selected_branch != 'All':
+                    filtered_report_data = filtered_report_data[filtered_report_data['Branch'] == selected_branch]
+                if selected_scheme != 'All':
+                    filtered_report_data = filtered_report_data[filtered_report_data['Scheme Name'] == selected_scheme]
+
+                st.dataframe(filtered_report_data, width='stretch')
+
+                st.markdown("#### 💾 Download This Report")
+                csv_buffer = io.StringIO()
+                filtered_report_data.to_csv(csv_buffer, index=False)
+                st.download_button(
+                    label="📥 Download Branch-wise Scheme Report (CSV)",
+                    data=csv_buffer.getvalue(),
+                    file_name=f"branch_wise_scheme_{timestamp}.csv",
+                    mime="text/csv",
+                    width='content'
+                )
+            else:
+                st.info("ℹ️ No scheme data available")
+
+        with tab3:
+            st.markdown("### 👥 Branch & Employee-wise Scheme Report")
+            st.info("📊 **Note:** This report EXCLUDES duplicate records for accurate calculations")
+            emp_scheme_report = generator.generate_branch_employee_wise_scheme_report(filtered_data)
+
+            if len(emp_scheme_report) > 0:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    branches = ['All'] + list(dict.fromkeys(emp_scheme_report['Branch'].tolist()))
+                    selected_branch = st.selectbox("🏢 Filter by Branch", branches, key="emp_branch_filter")
+                with col2:
+                    if selected_branch != 'All':
+                        employees = ['All'] + sorted(emp_scheme_report[emp_scheme_report['Branch'] == selected_branch]['Employee Name'].unique().tolist())
+                    else:
+                        employees = ['All'] + sorted(emp_scheme_report['Employee Name'].unique().tolist())
+                    selected_employee = st.selectbox("👤 Filter by Employee", employees, key="emp_filter")
+                with col3:
+                    schemes = ['All'] + sorted(emp_scheme_report['Scheme Name'].unique().tolist())
+                    selected_scheme = st.selectbox("📋 Filter by Scheme", schemes, key="emp_scheme_filter")
+
+                filtered_report_data = emp_scheme_report.copy()
+                if selected_branch != 'All':
+                    filtered_report_data = filtered_report_data[filtered_report_data['Branch'] == selected_branch]
+                if selected_employee != 'All':
+                    filtered_report_data = filtered_report_data[filtered_report_data['Employee Name'] == selected_employee]
+                if selected_scheme != 'All':
+                    filtered_report_data = filtered_report_data[filtered_report_data['Scheme Name'] == selected_scheme]
+
+                display_columns = ['Branch', 'Employee Name', 'Employee Code', 'Referral Code', 'Scheme Name',
+                                    'Number of Customers', 'Total Enrollment Amount', 'Match Rate (%)']
+                st.dataframe(filtered_report_data[display_columns], width='stretch')
+
+                if selected_employee != 'All':
+                    st.markdown("---")
+                    st.markdown(f"### 📋 Detailed Referral Records for: {selected_employee}")
+
+                    if 'Is Duplicate' in filtered_data.columns:
+                        employee_records = filtered_data[
+                            (filtered_data['Employee Name'] == selected_employee) &
+                            (filtered_data['Is Duplicate'] == False)
+                        ].copy()
+                    else:
+                        employee_records = filtered_data[filtered_data['Employee Name'] == selected_employee].copy()
+
+                    if selected_branch != 'All':
+                        employee_records = employee_records[employee_records['Branch'] == selected_branch]
+                    if selected_scheme != 'All':
+                        employee_records = employee_records[employee_records['Scheme Name'] == selected_scheme]
+
+                    if len(employee_records) > 0:
+                        col_a, col_b, col_c, col_d, col_e = st.columns(5)
+                        with col_a:
+                            st.metric("Total Referrals", len(employee_records))
+                        with col_b:
+                            total_amount = employee_records['Customer Enrollment Amount'].sum()
+                            st.metric("Total Enrollment Amount", format_currency(total_amount))
+                        with col_c:
+                            matched = employee_records['True/False'].sum() if 'True/False' in employee_records.columns else 0
+                            st.metric("Matched Payments", int(matched))
+                        with col_d:
+                            not_enrolled = employee_records['Not Enrolled'].sum() if 'Not Enrolled' in employee_records.columns else 0
+                            st.metric("Not Enrolled", int(not_enrolled))
+                        with col_e:
+                            match_rate = (matched / len(employee_records) * 100) if len(employee_records) > 0 else 0
+                            st.metric("Match Rate", f"{match_rate:.1f}%")
+
+                        detail_columns = [
+                            'Updated Date', 'Customer Name', 'Customer Phone', 'Customer Enrollment Amount',
+                            'Status', 'Scheme Name', 'Scheme Passbook Number', 'Customer Payment', 'True/False',
+                            'Not Enrolled', 'Branch', 'Category'
+                        ]
+                        available_detail_cols = [col for col in detail_columns if col in employee_records.columns]
+                        st.dataframe(employee_records[available_detail_cols], width='stretch', height=300)
+
+                        st.markdown("#### 💾 Download Employee Detail Report")
+                        emp_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        emp_clean_name = selected_employee.replace(" ", "_")
+
+                        download_columns = [
+                            'Employee Name', 'Employee Code', 'Referral Code', 'Employee Phone',
+                            'Updated Date', 'Customer Name', 'Customer Phone', 'Customer Enrollment Amount',
+                            'Status', 'Scheme Name', 'Scheme Passbook Number', 'Customer Payment', 'True/False',
+                            'Not Enrolled', 'Branch', 'Category'
+                        ]
+                        available_download_cols = [col for col in download_columns if col in employee_records.columns]
+                        download_df = employee_records[available_download_cols].copy()
+
+                        if 'Customer Enrollment Amount' in download_df.columns:
+                            download_df['Customer Enrollment Amount'] = download_df['Customer Enrollment Amount'].apply(
+                                lambda x: format_currency(x) if pd.notna(x) else "")
+                        if 'Customer Payment' in download_df.columns:
+                            download_df['Customer Payment'] = download_df['Customer Payment'].apply(
+                                lambda x: format_currency(x) if pd.notna(x) else "")
+
+                        csv_emp_buffer = io.StringIO()
+                        download_df.to_csv(csv_emp_buffer, index=False)
+
+                        excel_emp_buffer = io.BytesIO()
+                        with pd.ExcelWriter(excel_emp_buffer, engine='openpyxl') as writer:
+                            download_df.to_excel(writer, sheet_name='Employee Details', index=False)
+                            summary_data = {
+                                'Employee Name': [selected_employee],
+                                'Employee Code': [employee_records['Employee Code'].iloc[0] if len(employee_records) > 0 and pd.notna(employee_records['Employee Code'].iloc[0]) else ''],
+                                'Referral Code': [employee_records['Referral Code'].iloc[0] if len(employee_records) > 0 and pd.notna(employee_records['Referral Code'].iloc[0]) else ''],
+                                'Employee Phone': [employee_records['Employee Phone'].iloc[0] if len(employee_records) > 0 and pd.notna(employee_records['Employee Phone'].iloc[0]) else ''],
+                                'Total Referrals': [len(employee_records)],
+                                'Total Enrollment Amount': [format_currency(employee_records['Customer Enrollment Amount'].sum())],
+                                'Total Payment Received': [format_currency(employee_records['Customer Payment'].sum()) if 'Customer Payment' in employee_records.columns else '₹0.00'],
+                                'Match Rate': [f"{(employee_records['True/False'].sum() / len(employee_records) * 100):.1f}%" if 'True/False' in employee_records.columns and len(employee_records) > 0 else '0%'],
+                                'Date Filter Applied': [f"{filter_start_date} to {filter_end_date}" if filter_start_date and filter_end_date else "No Filter"],
+                                'Report Generated': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
+                            }
+                            pd.DataFrame([summary_data]).to_excel(writer, sheet_name='Summary', index=False)
+
+                            if 'Scheme Name' in employee_records.columns:
+                                scheme_breakdown = employee_records.groupby('Scheme Name').agg({
+                                    'Customer Name': 'count',
+                                    'Customer Enrollment Amount': 'sum',
+                                    'Customer Payment': 'sum' if 'Customer Payment' in employee_records.columns else 'count'
+                                }).reset_index()
+                                scheme_breakdown.columns = ['Scheme Name', 'Number of Customers', 'Total Amount', 'Total Payment']
+                                scheme_breakdown['Total Amount'] = scheme_breakdown['Total Amount'].apply(format_currency)
+                                scheme_breakdown['Total Payment'] = scheme_breakdown['Total Payment'].apply(format_currency)
+                                scheme_breakdown.to_excel(writer, sheet_name='Scheme Breakdown', index=False)
+
+                        col_download1, col_download2 = st.columns(2)
+                        with col_download1:
+                            st.download_button(
+                                label=f"📥 Download {selected_employee} Report (CSV)",
+                                data=csv_emp_buffer.getvalue(),
+                                file_name=f"employee_{emp_clean_name}_details_{emp_timestamp}.csv",
+                                mime="text/csv",
+                                width='stretch'
+                            )
+                        with col_download2:
+                            st.download_button(
+                                label=f"📥 Download {selected_employee} Report (Excel)",
+                                data=excel_emp_buffer.getvalue(),
+                                file_name=f"employee_{emp_clean_name}_details_{emp_timestamp}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                width='stretch'
+                            )
+
+                        st.markdown("#### 📊 Scheme-wise Breakdown")
+                        scheme_breakdown = employee_records.groupby('Scheme Name').agg({
+                            'Customer Name': 'count',
+                            'Customer Enrollment Amount': 'sum',
+                            'Customer Payment': 'sum' if 'Customer Payment' in employee_records.columns else 'count'
+                        }).reset_index()
+                        scheme_breakdown.columns = ['Scheme Name', 'Number of Customers', 'Total Amount', 'Total Payment']
+                        st.dataframe(scheme_breakdown, width='stretch')
+
+                        if len(employee_records['Branch'].unique()) > 1:
+                            st.markdown("#### 📊 Branch-wise Breakdown")
+                            branch_breakdown = employee_records.groupby('Branch').agg({
+                                'Customer Name': 'count',
+                                'Customer Enrollment Amount': 'sum'
+                            }).reset_index()
+                            branch_breakdown.columns = ['Branch', 'Number of Customers', 'Total Amount']
+                            st.dataframe(branch_breakdown, width='stretch')
+                    else:
+                        st.info(f"ℹ️ No records found for {selected_employee} with the current filters")
+
+                st.markdown("#### 💾 Download This Report")
+                csv_buffer = io.StringIO()
+                filtered_report_data[display_columns].to_csv(csv_buffer, index=False)
+                st.download_button(
+                    label="📥 Download Branch-Employee Scheme Report (CSV)",
+                    data=csv_buffer.getvalue(),
+                    file_name=f"branch_employee_scheme_{timestamp}.csv",
+                    mime="text/csv",
+                    width='content'
+                )
+            else:
+                st.info("ℹ️ No employee scheme data available")
+
+        with tab4:
+            st.markdown("### 📊 Branch Summary Report")
+            st.info("📊 **Note:** This report EXCLUDES duplicate records for accurate calculations. Every branch is listed (including zero-referral branches) in the fixed branch order, with Telecaller last.")
+            branch_summary = generator.generate_branch_summary_report(filtered_data)
+
+            if len(branch_summary) > 0:
+                st.dataframe(branch_summary, width='stretch')
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("#### Branches by Customers (fixed branch order)")
+                    top_branches = branch_summary.copy()
+                    fig = px.bar(top_branches, x='Branch', y='Total Customers')
+                    fig.update_xaxes(categoryorder='array', categoryarray=top_branches['Branch'].tolist())
+                    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
+                    st.plotly_chart(fig, use_container_width=True)
+                with col2:
+                    st.markdown("#### Enrollment Rate by Branch")
+                    fig = px.bar(top_branches, x='Branch', y='Enrollment Rate (%)')
+                    fig.update_xaxes(categoryorder='array', categoryarray=top_branches['Branch'].tolist())
+                    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
+                    st.plotly_chart(fig, use_container_width=True)
+
+                st.markdown("#### 💾 Download This Report")
+                csv_buffer = io.StringIO()
+                branch_summary.to_csv(csv_buffer, index=False)
+                st.download_button(
+                    label="📥 Download Branch Summary Report (CSV)",
+                    data=csv_buffer.getvalue(),
+                    file_name=f"branch_summary_{timestamp}.csv",
+                    mime="text/csv",
+                    width='content'
+                )
+            else:
+                st.info("ℹ️ No branch summary data available")
+
+        with tab5:
+            st.markdown("### ⭐ Employee Performance Report")
+            st.info("📊 **Note:** This report EXCLUDES duplicate records for accurate calculations")
+            emp_performance = generator.generate_employee_performance_report(filtered_data)
+
+            if len(emp_performance) > 0:
+                col1, col2 = st.columns(2)
+                with col1:
+                    categories = ['All'] + sorted(emp_performance['Category'].unique().tolist())
+                    selected_category = st.selectbox("🏷️ Filter by Category", categories)
+                with col2:
+                    branches = ['All'] + list(dict.fromkeys(emp_performance['Branch'].tolist()))
+                    selected_branch = st.selectbox("🏢 Filter by Branch", branches, key="perf_branch_filter")
+
+                filtered_performance = emp_performance.copy()
+                if selected_category != 'All':
+                    filtered_performance = filtered_performance[filtered_performance['Category'] == selected_category]
+                if selected_branch != 'All':
+                    filtered_performance = filtered_performance[filtered_performance['Branch'] == selected_branch]
+
+                display_columns = ['Employee Name', 'Referral Code', 'Branch', 'Total Customers',
+                                    'Total Enrollment Amount', 'Enrollment Rate (%)', 'Match Rate (%)']
+                st.dataframe(filtered_performance[display_columns], width='stretch')
+
+                st.markdown("#### 💾 Download This Report")
+                csv_buffer = io.StringIO()
+                filtered_performance[display_columns].to_csv(csv_buffer, index=False)
+                st.download_button(
+                    label="📥 Download Employee Performance Report (CSV)",
+                    data=csv_buffer.getvalue(),
+                    file_name=f"employee_performance_{timestamp}.csv",
+                    mime="text/csv",
+                    width='content'
+                )
+            else:
+                st.info("ℹ️ No employee performance data available")
+
+        with tab6:
+            st.markdown("### 📝 Registration Analysis Report")
+            st.info("📊 **Note:** This report EXCLUDES duplicate records for accurate calculations. Every branch is listed (including zero-referral branches) in the fixed branch order, with Telecaller last.")
+            reg_pivot, not_enrolled_customers = generator.generate_registration_analysis_report(filtered_data)
+
+            st.markdown("#### Registration Summary")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                total_customers = len(filtered_data[filtered_data['Is Duplicate'] == False]) if 'Is Duplicate' in filtered_data.columns else len(filtered_data)
+                st.metric("Total Customers", f"{total_customers:,}")
+            with col2:
+                if 'Is Duplicate' in filtered_data.columns:
+                    enrolled = len(filtered_data[(filtered_data['Not Enrolled'] == False) & (filtered_data['Is Duplicate'] == False)])
+                else:
+                    enrolled = len(filtered_data[filtered_data['Not Enrolled'] == False])
+                st.metric("Enrolled", f"{enrolled:,}")
+            with col3:
+                st.metric("Not Enrolled", f"{len(not_enrolled_customers):,}")
+            with col4:
+                enrollment_rate = (enrolled / total_customers * 100) if total_customers > 0 else 0
+                st.metric("Enrollment Rate", f"{enrollment_rate:.2f}%")
+
+            st.markdown("#### Branch-wise Registration Status")
+            st.dataframe(reg_pivot, width='stretch')
+
+            st.markdown("#### 💾 Download Registration Analysis")
+            csv_buffer = io.StringIO()
+            reg_pivot.to_csv(csv_buffer, index=False)
+            st.download_button(
+                label="📥 Download Registration Analysis Report (CSV)",
+                data=csv_buffer.getvalue(),
+                file_name=f"registration_analysis_{timestamp}.csv",
+                mime="text/csv",
+                width='content'
+            )
+
+            if len(not_enrolled_customers) > 0:
+                st.markdown("#### Not Enrolled Customers")
+                st.dataframe(not_enrolled_customers, width='stretch')
+
+                csv_buffer = io.StringIO()
+                not_enrolled_customers.to_csv(csv_buffer, index=False)
+                st.download_button(
+                    label="📥 Download Not Enrolled Customers Report (CSV)",
+                    data=csv_buffer.getvalue(),
+                    file_name=f"not_enrolled_customers_{timestamp}.csv",
+                    mime="text/csv",
+                    width='content'
+                )
+
+        with tab7:
+            st.markdown("### 📈 Branch & Employee Wise Referral Report")
+            st.info("📊 **Note:** This report EXCLUDES duplicate records for accurate calculations. Every branch is listed (including zero-referral branches) in the fixed branch order, with Telecaller last.")
+            st.markdown("Shows branch and employee-wise scheme distribution for ALL schemes")
+
+            branch_df, employee_df, schemes = generator.generate_branch_employee_referral_report(
+                filtered_data, filter_start_date, filter_end_date
+            )
+
+            if len(branch_df) > 0:
+                st.info(f"📊 **Schemes found:** {', '.join(schemes)}")
+
+                st.markdown("#### 🔍 Filter by Branch (Applies to both sections below)")
+                all_branches = branch_df[branch_df['Branch'] != 'Grand Total']['Branch'].tolist()
+
+                # ---- FIX: no 'Select All' magic string; empty = all branches ----
+                selected_branches = st.multiselect(
+                    "🏢 Select Branches (leave empty to include ALL branches)",
+                    options=all_branches,
+                    default=[],
+                    key="branch_ref_filter_sync"
+                )
+
+                if not selected_branches:
+                    selected_branches = all_branches
+                    st.caption("ℹ️ No branches selected → showing ALL branches. Pick specific branches to filter.")
+                else:
+                    st.caption(f"✅ Filtering to {len(selected_branches)} branch(es): {', '.join(selected_branches)}")
+
+                # ---- FILTER BRANCH DATA ----
+                branch_filter_mask = branch_df['Branch'].isin(selected_branches)
+                grand_total_mask = branch_df['Branch'] == 'Grand Total'
+                filtered_branch_df = branch_df[branch_filter_mask | grand_total_mask].copy()
+
+                branch_data_only = branch_df[branch_df['Branch'] != 'Grand Total'].copy()
+                branch_data_filtered = branch_data_only[branch_data_only['Branch'].isin(selected_branches)].copy()
+
+                # ---- RECOMPUTE GRAND TOTAL FOR FILTERED BRANCHES ----
+                if len(branch_data_filtered) > 0:
+                    for col in branch_data_filtered.columns:
+                        if 'Count' in col and col != 'Count %':
+                            branch_data_filtered[col] = pd.to_numeric(branch_data_filtered[col], errors='coerce').fillna(0)
+                        if 'Amount' in col and col != 'Amount %':
+                            branch_data_filtered[col] = pd.to_numeric(branch_data_filtered[col], errors='coerce').fillna(0)
+
+                    new_grand_total = {'Branch': 'Grand Total'}
+                    for scheme in schemes:
+                        new_grand_total[f'{scheme} Count'] = 0
+                        new_grand_total[f'{scheme} Amount'] = 0
+
+                    new_grand_total['Total Enrolled Count'] = int(branch_data_filtered['Total Enrolled Count'].sum())
+                    new_grand_total['Total Enrolled Amount'] = float(branch_data_filtered['Total Enrolled Amount'].sum())
+                    new_grand_total['Not Enrolled Count'] = int(branch_data_filtered['Not Enrolled Count'].sum())
+
+                    for scheme in schemes:
+                        count_col = f'{scheme} Count'
+                        amount_col = f'{scheme} Amount'
+                        if count_col in branch_data_filtered.columns:
+                            new_grand_total[count_col] = int(branch_data_filtered[count_col].sum())
+                        if amount_col in branch_data_filtered.columns:
+                            new_grand_total[amount_col] = float(branch_data_filtered[amount_col].sum())
+
+                    total_count = new_grand_total['Total Enrolled Count']
+                    total_amount = new_grand_total['Total Enrolled Amount']
+
+                    new_grand_total['Count %'] = '100%' if total_count > 0 else '0%'
+                    new_grand_total['Amount %'] = '100%' if total_amount > 0 else '0%'
+
+                    for idx, row in branch_data_filtered.iterrows():
+                        branch_name = row['Branch']
+                        count_val = row['Total Enrolled Count']
+                        amount_val = row['Total Enrolled Amount']
+
+                        if total_count > 0:
+                            count_pct = (count_val / total_count) * 100
+                            filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Count %'] = f"{count_pct:.1f}%"
+                        else:
+                            filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Count %'] = "0%"
+
+                        if total_amount > 0:
+                            amount_pct = (amount_val / total_amount) * 100
+                            filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Amount %'] = f"{amount_pct:.1f}%"
+                        else:
+                            filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Amount %'] = "0%"
+
+                    filtered_branch_df = filtered_branch_df[filtered_branch_df['Branch'] != 'Grand Total']
+                    filtered_branch_df = sort_branches_df(filtered_branch_df, selected_branches, 'Branch')
+                    filtered_branch_df = pd.concat([filtered_branch_df, pd.DataFrame([new_grand_total])], ignore_index=True)
+                    _col_order = [c for c in branch_df.columns if c in filtered_branch_df.columns]
+                    _remaining = [c for c in filtered_branch_df.columns if c not in _col_order]
+                    filtered_branch_df = filtered_branch_df[_col_order + _remaining]
+
+                filtered_employee_df = employee_df[employee_df['Branch'].isin(selected_branches)].copy()
+                filtered_employee_df = sort_branches_df(filtered_employee_df, selected_branches, 'Branch') if len(filtered_employee_df) > 0 else filtered_employee_df
+
+                st.markdown("#### Branch-wise Summary")
+                st.dataframe(filtered_branch_df, width='stretch')
+
+                st.markdown("#### Employee-wise Details")
+
+                if len(filtered_employee_df) > 0:
+                    available_employees = sorted(filtered_employee_df['Employee Name'].unique().tolist())
+                    selected_employee_names = st.multiselect(
+                        "👤 Filter by Employees (Optional - leave empty for all)",
+                        options=available_employees,
+                        default=[],
+                        key="emp_ref_emp_sync"
+                    )
+
+                    if selected_employee_names:
+                        filtered_employee_df = filtered_employee_df[
+                            filtered_employee_df['Employee Name'].isin(selected_employee_names)
+                        ]
+
+                    display_emp_df = filtered_employee_df.copy()
+                    amount_cols = [col for col in display_emp_df.columns if 'Amount' in col]
+                    for col in amount_cols:
+                        if col in display_emp_df.columns:
+                            display_emp_df[col] = display_emp_df[col].apply(format_currency)
+
+                    st.dataframe(display_emp_df, width='stretch')
+
+                    # Employee-wise Grand Total - respects BOTH branch and employee filters.
+                    employee_grand_total = {
+                        'Branch': 'Grand Total',
+                        'Employee Code': '',
+                        'Referral Code': '',
+                    }
+                    for col in filtered_employee_df.columns:
+                        if col in ('Branch', 'Employee Code', 'Referral Code'):
+                            continue
+                        if 'Count' in col or ('Amount' in col and col != 'Amount %'):
+                            employee_grand_total[col] = pd.to_numeric(
+                                filtered_employee_df[col], errors='coerce'
+                            ).fillna(0).sum()
+
+                    employee_gt_df = pd.DataFrame([employee_grand_total])
+                    for col in employee_gt_df.columns:
+                        if 'Amount' in col and col != 'Amount %':
+                            employee_gt_df[col] = employee_gt_df[col].apply(format_currency)
+                    st.markdown("##### 🏆 Employee-wise Grand Total")
+                    st.dataframe(employee_gt_df, width='stretch', hide_index=True)
+
+                    st.markdown("#### 📊 Summary for Selected Branches")
+                    col_a, col_b, col_c, col_d = st.columns(4)
+
+                    branch_data = filtered_branch_df[filtered_branch_df['Branch'] != 'Grand Total'].copy()
+                    for col in branch_data.columns:
+                        if 'Count' in col and col != 'Count %':
+                            branch_data[col] = pd.to_numeric(branch_data[col], errors='coerce').fillna(0)
+                        if 'Amount' in col and col != 'Amount %':
+                            branch_data[col] = pd.to_numeric(branch_data[col], errors='coerce').fillna(0)
+
+                    with col_a:
+                        st.metric("Selected Branches", len(branch_data))
+                    with col_b:
+                        total_enrolled = branch_data['Total Enrolled Count'].sum() if 'Total Enrolled Count' in branch_data.columns else 0
+                        st.metric("Total Enrolled", f"{int(total_enrolled):,}")
+                    with col_c:
+                        total_not_enrolled = branch_data['Not Enrolled Count'].sum() if 'Not Enrolled Count' in branch_data.columns else 0
+                        st.metric("Not Enrolled", f"{int(total_not_enrolled):,}")
+                    with col_d:
+                        total_amt = branch_data['Total Enrolled Amount'].sum() if 'Total Enrolled Amount' in branch_data.columns else 0
+                        st.metric("Total Amount", format_currency(total_amt))
+
+                    st.markdown("---")
+                    st.markdown("#### 💾 Download Both Reports Together (Single Sheet)")
+
+                    # ==================================================
+                    # REBUILD EXPORT FRAMES FROM SCRATCH (guaranteed filter)
+                    # ==================================================
+                    branch_export_df = branch_df[
+                        branch_df['Branch'].isin(selected_branches)
+                    ].copy()
+                    branch_export_df = branch_export_df[
+                        branch_export_df['Branch'] != 'Grand Total'
+                    ].copy()
+
+                    # Recompute Grand Total from filtered branches
+                    gt_row = {'Branch': 'Grand Total', 'Count %': '100%', 'Amount %': '100%'}
+                    for scheme in schemes:
+                        cnt_col = f'{scheme} Count'
+                        amt_col = f'{scheme} Amount'
+                        if cnt_col in branch_export_df.columns:
+                            gt_row[cnt_col] = int(pd.to_numeric(branch_export_df[cnt_col], errors='coerce').fillna(0).sum())
+                        if amt_col in branch_export_df.columns:
+                            gt_row[amt_col] = float(pd.to_numeric(branch_export_df[amt_col], errors='coerce').fillna(0).sum())
+
+                    gt_row['Total Enrolled Count'] = int(pd.to_numeric(
+                        branch_export_df['Total Enrolled Count'] if 'Total Enrolled Count' in branch_export_df.columns else pd.Series([0]),
+                        errors='coerce'
+                    ).fillna(0).sum())
+                    gt_row['Total Enrolled Amount'] = float(pd.to_numeric(
+                        branch_export_df['Total Enrolled Amount'] if 'Total Enrolled Amount' in branch_export_df.columns else pd.Series([0]),
+                        errors='coerce'
+                    ).fillna(0).sum())
+                    gt_row['Not Enrolled Count'] = int(pd.to_numeric(
+                        branch_export_df['Not Enrolled Count'] if 'Not Enrolled Count' in branch_export_df.columns else pd.Series([0]),
+                        errors='coerce'
+                    ).fillna(0).sum())
+
+                    branch_export_df = sort_branches_df(branch_export_df, selected_branches, 'Branch')
+                    branch_export_df = pd.concat([branch_export_df, pd.DataFrame([gt_row])], ignore_index=True)
+
+                    _col_order_export = [c for c in branch_df.columns if c in branch_export_df.columns]
+                    _remaining_export = [c for c in branch_export_df.columns if c not in _col_order_export]
+                    branch_export_df = branch_export_df[_col_order_export + _remaining_export]
+
+                    # Employee export
+                    employee_export_df = employee_df[employee_df['Branch'].isin(selected_branches)].copy()
+                    if selected_employee_names:
+                        employee_export_df = employee_export_df[
+                            employee_export_df['Employee Name'].isin(selected_employee_names)
+                        ].copy()
+
+                    # Debug expander
+                    with st.expander("🔎 Confirm what will be exported (click to expand)", expanded=False):
+                        st.write(f"**Selected branches ({len(selected_branches)}):** {', '.join(selected_branches)}")
+                        st.write(f"**Branches in Branch table:** {sorted(branch_export_df[branch_export_df['Branch'] != 'Grand Total']['Branch'].unique().tolist())}")
+                        st.write(f"**Branches in Employee table:** {sorted(employee_export_df['Branch'].unique().tolist())}")
+                        if len(employee_export_df) > 0:
+                            st.write(f"**Unique employees:** {employee_export_df['Employee Name'].nunique()}")
+
+                    # Build Excel
+                    combined_excel = create_single_page_referral_excel(
+                        branch_df=branch_export_df,
+                        employee_df=employee_export_df,
+                        schemes=schemes,
+                        start_date=filter_start_date,
+                        end_date=filter_end_date,
+                        selected_branches=selected_branches,
+                    )
+
+                    excel_bytes = combined_excel.getvalue()
+
+                    timestamp_local = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    if filter_start_date and filter_end_date:
+                        date_part = f"{filter_start_date}_to_{filter_end_date}"
+                    else:
+                        date_part = "all_data"
+
+                    all_branches_list = branch_df[branch_df['Branch'] != 'Grand Total']['Branch'].tolist()
+                    is_all_selected = set(selected_branches) == set(all_branches_list)
+
+                    if is_all_selected or len(selected_branches) > 3:
+                        branch_part = "all_branches"
+                    else:
+                        branch_part = "_".join(
+                            b.replace("Bhima Jewellery - ", "").replace(" ", "")
+                            for b in selected_branches[:3]
                         )
-                    st.dataframe(day_display, use_container_width=True, hide_index=True)
 
-            with st.expander("📋 View Referral Match Details"):
-                dd = referral_detail.drop(columns=["Referee Phone", "Match Date"], errors="ignore").copy()
-                for col in ["Registered Date", "Joined Date", "Transaction Date"]:
-                    if col in dd.columns:
-                        dd[col] = dd[col].apply(lambda x: x.strftime("%d-%m-%Y") if pd.notna(x) else "")
-                st.dataframe(dd, use_container_width=True, hide_index=True)
+                    filename = f"branch_employee_referral_{branch_part}_{date_part}_{timestamp_local}.xlsx"
 
-            if not referral_duplicates.empty:
-                with st.expander("🔴 View Duplicate Records"):
-                    st.dataframe(referral_duplicates, use_container_width=True, hide_index=True)
-    else:
-        st.info("💡 Upload Employee + Referral files to see the Referral Report.")
-    st.header("📥 Download Formatted Report")
-    clean_filename = generate_clean_filename(start_date, end_date)
-    st.info(f"📁 **Report will be saved as:** `{clean_filename}.xlsx`")
-    report_title = uploaded_file.name.rsplit(".", 1)[0] or "Scheme Enrollment & Collection Report"
-    daily_data = {
-        "summary": daily_summary if daily_summary is not None and not daily_summary.empty else pd.DataFrame(),
-        "enrollment": daily_enrollment if daily_enrollment is not None and not daily_enrollment.empty else pd.DataFrame(),
-        "collection": daily_collection if daily_collection is not None and not daily_collection.empty else pd.DataFrame(),
-        "unique": daily_unique if daily_unique is not None and not daily_unique.empty else pd.DataFrame(),
-        "schemes": daily_schemes,
-        "date_range": (start_date.strftime("%d-%m-%Y"), end_date.strftime("%d-%m-%Y")),
-        "report_title": "eGold & eSilver Enrollment & Collection Report",
-        "sheet_name": "eGold & eSilver",
-        "enrollment_projection": daily_enrollment_projection,
-        "collection_projection": daily_collection_projection,
-        "projection_month_label": daily_projection_label,
-        "avg_ticket_data": daily_avg_ticket if daily_avg_ticket is not None and not daily_avg_ticket.empty else pd.DataFrame(),
-    }
-    sessional_data = {
-        "summary": sessional_summary if sessional_summary is not None and not sessional_summary.empty else pd.DataFrame(),
-        "enrollment": sessional_enrollment if sessional_enrollment is not None and not sessional_enrollment.empty else pd.DataFrame(),
-        "collection": sessional_collection if sessional_collection is not None and not sessional_collection.empty else pd.DataFrame(),
-        "unique": sessional_unique if sessional_unique is not None and not sessional_unique.empty else pd.DataFrame(),
-        "schemes": sessional_schemes,
-        "date_range": (start_date.strftime("%d-%m-%Y"), end_date.strftime("%d-%m-%Y")),
-        "report_title": "Sessional Scheme Enrollment & Collection Report",
-        "sheet_name": "Sessional Scheme",
-        "enrollment_projection": sessional_enrollment_projection,
-        "collection_projection": sessional_collection_projection,
-        "projection_month_label": sessional_projection_label,
-        "avg_ticket_data": sessional_avg_ticket if sessional_avg_ticket is not None and not sessional_avg_ticket.empty else pd.DataFrame(),
-    }
-    try:
-        with st.spinner("Building the formatted Excel workbook..."):
-            excel_data = create_formatted_excel(
-                daily_data,
-                sessional_data,
-                (start_date.strftime("%d-%m-%Y"), end_date.strftime("%d-%m-%Y")),
-                report_title,
-                referral_summary=referral_summary,
-                referral_daily=referral_daily_list,
-                referral_detail=referral_detail,
-                referral_duplicates=referral_duplicates,
+                    filter_signature = (
+                        f"{len(selected_branches)}_"
+                        f"{abs(hash(tuple(selected_branches)))}_"
+                        f"{len(selected_employee_names) if selected_employee_names else 'all'}_"
+                        f"{filter_start_date}_{filter_end_date}"
+                    )
+
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col2:
+                        st.download_button(
+                            label="📥 Download Both Reports (Single Sheet Excel)",
+                            data=excel_bytes,
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            width='stretch',
+                            key=f"download_referral_{filter_signature}",
+                            help="Download Branch-wise Summary and Employee-wise Details on a single formatted Excel sheet, filtered by your branch selection"
+                        )
+
+                    with st.expander("📎 Additional Download Options (CSV)"):
+                        st.markdown("**Download individual reports as CSV:**")
+                        col_csv1, col_csv2 = st.columns(2)
+                        with col_csv1:
+                            csv_buffer_branch = io.StringIO()
+                            branch_export_df.to_csv(csv_buffer_branch, index=False)
+                            st.download_button(
+                                label="📥 Branch Summary (CSV)",
+                                data=csv_buffer_branch.getvalue(),
+                                file_name=f"branch_summary_{branch_part}_{timestamp_local}.csv",
+                                mime="text/csv",
+                                width='stretch',
+                                key=f"csv_branch_{filter_signature}"
+                            )
+                        with col_csv2:
+                            csv_buffer_employee = io.StringIO()
+                            employee_export_df.to_csv(csv_buffer_employee, index=False)
+                            st.download_button(
+                                label="📥 Employee Details (CSV)",
+                                data=csv_buffer_employee.getvalue(),
+                                file_name=f"employee_details_{branch_part}_{timestamp_local}.csv",
+                                mime="text/csv",
+                                width='stretch',
+                                key=f"csv_employee_{filter_signature}"
+                            )
+                else:
+                    st.info("ℹ️ No employee data available for the selected branches")
+            else:
+                st.info("ℹ️ No data available for referral report")
+
+        st.markdown("---")
+        st.markdown("### 💾 Export All Reports")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            excel_buffer = create_excel_report(
+                filtered_data, generator, duplicates_df, duplicate_indices,
+                filter_start_date, filter_end_date,
+                selected_branches=selected_branches if 'selected_branches' in locals() else None,
+                selected_employee_names=selected_employee_names if 'selected_employee_names' in locals() else None,
             )
-        st.download_button(
-            label="⬇️ Download Formatted Excel Report",
-            data=excel_data,
-            file_name=f"{clean_filename}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
+
+            if filter_start_date and filter_end_date:
+                filename = f"complete_reports_{filter_start_date}_to_{filter_end_date}_{timestamp}.xlsx"
+            else:
+                filename = f"complete_reports_all_data_{timestamp}.xlsx"
+
+            all_report_signature = (
+                f"{filter_start_date}_{filter_end_date}_"
+                f"{abs(hash(tuple(selected_branches))) if 'selected_branches' in locals() else 'all'}_"
+                f"{abs(hash(tuple(selected_employee_names))) if 'selected_employee_names' in locals() else 'all'}"
+            )
+            st.download_button(
+                label="📥 Download All Reports (Excel - Complete)",
+                data=excel_buffer.getvalue(),
+                file_name=filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width='stretch',
+                key=f"download_all_reports_{all_report_signature}"
+            )
+
+            if len(duplicates_df) > 0:
+                st.info("📊 Excel file includes:")
+                st.info("   • ALL records kept in Consolidated Report (duplicates HIGHLIGHTED IN PINK)")
+                st.info("   • 'Duplicate Records' sheet with duplicate entries showing original vs duplicate")
+                st.info("   • All other reports EXCLUDE duplicates for accurate calculations")
+                st.info("   • Branch-wise Scheme, Employee Performance, etc. show data WITHOUT duplicates, ordered Madurai → Marthandam → Salem → Tirunelveli → Trichy → Rajapalayam → Dindigul → Noida → Virudhunagar → Thanjavur → (any new branch) → Telecaller")
+
+        with col2:
+            if filter_start_date and filter_end_date:
+                st.info(f"💡 **Filter Applied:** {filter_start_date} to {filter_end_date}\n\nThe Excel file will include filtered data only.")
+            else:
+                st.info("💡 **Tip:** Use the date filters above to generate reports for specific time periods.\n\nYou can filter by week, month, or custom date range.")
+
     except Exception as e:
-        st.error(f"❌ Could not build the Excel report: {e}")
+        st.markdown(f'<div class="error-box">❌ Error: {str(e)}</div>', unsafe_allow_html=True)
+        st.info("💡 **Tip:** Please check that your files have the correct column names and data formats.")
+
+
+if __name__ == "__main__":
+    main()
