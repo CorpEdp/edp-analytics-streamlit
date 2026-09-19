@@ -194,7 +194,7 @@ MODE_REGISTRY = [
         "source": "modules/ERP-SchemeJoiningCashfreePaymentDetailsReconciliation.py",
     },
         {
-                "id": "scheme_joining_cashfree_payment_details_reconciliation",
+                "id": "Employee Referral Performance_report",
                 "name": "Scheme Joining Cashfree Payment Details Reconciliation",
                 "description": "Legacy Streamlit mode converted from ERP-SchemeJoiningCashfreePaymentDetailsReconciliation.py",
                 "category": "App",
