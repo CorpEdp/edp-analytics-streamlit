@@ -203,7 +203,6 @@ MODE_REGISTRY = [
         },
 ]
 
-
 def _display_name(module_name: str) -> str:
     return re.sub(r"\s+", " ", module_name.replace("_", " ")).strip().title()
 
