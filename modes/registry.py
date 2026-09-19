@@ -29,7 +29,7 @@ MODE_REGISTRY = [
         "id": "branch_employee_wise_referral_report",
         "name": "Branch Employee Wise Referral Report",
         "description": "Legacy Streamlit mode converted from App-Referral-BranchEmployeeWiseReferralReport.py",
-        "category": "Referral",
+        "category": "App",
         "module": "modes.branch_employee_wise_referral_report",
         "source": "modules/App-BranchEmployeeWiseReferralReport.py",
     },
