@@ -69,7 +69,7 @@ MODE_REGISTRY = [
         "id": "daily_scheme_payment_frequency_tracker_slap_wise",
         "name": "Daily Scheme Payment Frequency Tracker (Slap Wise)",
         "description": "Legacy Streamlit mode converted from App-DailySchemePaymentFrequencyTrackerSlapWise.py",
-        "category": "Payment",
+        "category": "App",
         "module": "modes.daily_scheme_payment_frequency_tracker_slap_wise",
         "source": "modules/App-DailySchemePaymentFrequencyTrackerSlapWise.py",
     },
