@@ -77,7 +77,7 @@ MODE_REGISTRY = [
         "id": "day_scheme_enrollment_collection_report",
         "name": "Day Scheme Enrollment and Collection Report",
         "description": "Legacy Streamlit mode converted from App-Day-SchemeEnrollmentCollectionReport.py",
-        "category": "Scheme",
+        "category": "App",
         "module": "modes.day_scheme_enrollment_collection_report",
         "source": "modules/App-Day-SchemeEnrollmentCollectionReport.py",
     },
