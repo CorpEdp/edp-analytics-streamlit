@@ -21,7 +21,7 @@ MODE_REGISTRY = [
         "id": "audit_scheme_participation_transaction",
         "name": "Audit: Scheme Participation and Transaction",
         "description": "Legacy Streamlit mode converted from App-Audit-SchemeParticipation&Transaction.py",
-        "category": "Audit",
+        "category": "App",
         "module": "modes.audit_scheme_participation_transaction",
         "source": "modules/App-Audit-SchemeParticipation&Transaction.py",
     },
