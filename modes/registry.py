@@ -199,8 +199,8 @@ MODE_REGISTRY = [
         "description": "Legacy Streamlit mode converted from App-EmployeeReferralPerformanceReport.py",
         "category": "App",
         "module": "modes.employee_referral_performance_report",
-                "source": "modules/App-EmployeeReferralPerformanceReport.py",
-            },
+        "source": "modules/App-EmployeeReferralPerformanceReport.py",
+        },
 ]
 
 
