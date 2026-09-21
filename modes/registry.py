@@ -200,7 +200,7 @@ MODE_REGISTRY = [
         "category": "App",
         "module": "modes.employee_referral_performance_report",
         "source": "modules/App-EmployeeReferralPerformanceReport.py",
-        },
+    },
         {
         "id": "employee_referral_performance_report",
         "name": "Employee Referral PerformanceReport",
@@ -208,7 +208,7 @@ MODE_REGISTRY = [
         "category": "App",
         "module": "modes.employee_referral_performance_report",
         "source": "modules/App-EmployeeReferralPerformanceReport.py",
-        },
+    },
 ]
 
 def _display_name(module_name: str) -> str:
