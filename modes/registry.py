@@ -202,12 +202,12 @@ MODE_REGISTRY = [
         "source": "modules/App-EmployeeReferralPerformanceReport.py",
     },
         {
-        "id": "employee_referral__report",
-        "name": "Employee Referral PerformanceReport",
-        "description": "Legacy Streamlit mode converted from App-EmployeeReferralPerformanceReport.py",
+        "id": "employee_referral_daywise_report",
+        "name": "Employee Referral Daywise Report",
+        "description": "Legacy Streamlit mode converted from App-EmployeeReferralDaywiseReport.py",
         "category": "App",
-        "module": "modes.employee_referral_performance_report",
-        "source": "modules/App-EmployeeReferralPerformanceReport.py",
+        "module": "modes.employee_referral_daywise_report",
+        "source": "modules/App-EmployeeReferralDaywiseReport.py",
     },
 ]
 
