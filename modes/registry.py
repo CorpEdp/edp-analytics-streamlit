@@ -203,7 +203,7 @@ MODE_REGISTRY = [
     },
         {
         "id": "bss_daywise_report",
-        "name": "BSS Daywise Report",
+        "name": "Bss Daywise Report",
         "description": "Legacy Streamlit mode converted from ERP-BssDaywiseReport.py",
         "category": "ERP",
         "module": "modes.bss_daywise_report",
