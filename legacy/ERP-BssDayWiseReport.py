@@ -1855,7 +1855,7 @@ def build_scheme_joining_excel(
     # DAY-WISE SECTION  (each date = merged banner header row)
     # --------------------------------------------------------
 
-    write_section(row, "📅 DAY-WISE SALES REPORT", total_cols)
+    write_section(row, "📅 DAY-WISE BSS REPORT", total_cols)
 
     row += 1
 
