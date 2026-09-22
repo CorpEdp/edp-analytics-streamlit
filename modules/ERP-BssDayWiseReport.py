@@ -1155,11 +1155,15 @@ AMOUNT_COL_BG = "FFEB9C"
 JOINING_COL_BG = "D9E1F2"
 BRANCH_COL_BG = "E2EFDA"
 
+PCT_JOINING_BG = "EDF3FB"
+PCT_WEIGHT_BG = "F2F9EF"
+PCT_AMOUNT_BG = "FFF8E1"
+
 TOTAL_BG = "FFF2CC"
 GRAND_BG = "C00000"
 
 EGOLD_COL_BG = "FCE4D6"
-DAY_BANNER_BG = "8EA9DB"   # banner for each day in the day-wise section
+DAY_BANNER_BG = "8EA9DB"
 
 WHITE = "FFFFFF"
 BLACK = "000000"
@@ -1183,7 +1187,7 @@ FONT_GRAND = Font(bold=True, size=11, color=WHITE)
 FONT_DATA = Font(size=10, color=BLACK)
 FONT_LABEL = Font(bold=True, size=10, color=BLACK)
 FONT_PERIOD = Font(bold=True, size=11, color=BLACK)
-FONT_LEGEND = Font(size=9, italic=True)
+FONT_PCT = Font(size=9, italic=True, color="595959")
 
 
 def _fill(color: str) -> PatternFill:
@@ -1202,6 +1206,9 @@ FILL_WEIGHT_COL = _fill(WEIGHT_COL_BG)
 FILL_AMOUNT_COL = _fill(AMOUNT_COL_BG)
 FILL_JOINING_COL = _fill(JOINING_COL_BG)
 FILL_BRANCH_COL = _fill(BRANCH_COL_BG)
+FILL_PCT_JOINING = _fill(PCT_JOINING_BG)
+FILL_PCT_WEIGHT = _fill(PCT_WEIGHT_BG)
+FILL_PCT_AMOUNT = _fill(PCT_AMOUNT_BG)
 FILL_TOTAL = _fill(TOTAL_BG)
 FILL_GRAND = _fill(GRAND_BG)
 FILL_EGOLD = _fill(EGOLD_COL_BG)
@@ -1216,24 +1223,34 @@ ALIGN_LEFT_INDENT = Alignment(horizontal="left", vertical="center", indent=2)
 FMT_COUNT = '#,##0;-#,##0;"-"'
 FMT_WEIGHT = '#,##0.000;-#,##0.000;""'
 FMT_AMOUNT = '"₹"#,##0.00;-"₹"#,##0.00;""'
+FMT_PERCENT = '0.00"%"'
 
 
 class ColKind(str, Enum):
     COUNT = "count"
     WEIGHT = "weight"
     AMOUNT = "amount"
+    PCT_COUNT = "pct_count"
+    PCT_WEIGHT = "pct_weight"
+    PCT_AMOUNT = "pct_amount"
 
 
 KIND_FILL = {
     ColKind.COUNT: FILL_JOINING_COL,
     ColKind.WEIGHT: FILL_WEIGHT_COL,
     ColKind.AMOUNT: FILL_AMOUNT_COL,
+    ColKind.PCT_COUNT: FILL_PCT_JOINING,
+    ColKind.PCT_WEIGHT: FILL_PCT_WEIGHT,
+    ColKind.PCT_AMOUNT: FILL_PCT_AMOUNT,
 }
 
 KIND_NUMBER_FORMAT = {
     ColKind.COUNT: FMT_COUNT,
     ColKind.WEIGHT: FMT_WEIGHT,
     ColKind.AMOUNT: FMT_AMOUNT,
+    ColKind.PCT_COUNT: FMT_PERCENT,
+    ColKind.PCT_WEIGHT: FMT_PERCENT,
+    ColKind.PCT_AMOUNT: FMT_PERCENT,
 }
 
 STYLE_DATA = "data"
@@ -1245,26 +1262,18 @@ ColumnSpec = Tuple[str, str, ColKind]
 
 COLUMNS_CASH: Tuple[ColumnSpec, ...] = (
     ("Joinings", "Joinings", ColKind.COUNT),
+    ("Joinings %", "Joinings %", ColKind.PCT_COUNT),
     ("Amount", "Amount", ColKind.AMOUNT),
+    ("Amount %", "Amount %", ColKind.PCT_AMOUNT),
 )
 
 COLUMNS_WEIGHT: Tuple[ColumnSpec, ...] = (
     ("Joinings", "Joinings", ColKind.COUNT),
+    ("Joinings %", "Joinings %", ColKind.PCT_COUNT),
     ("Booked Wt", "Booked Wt (g)", ColKind.WEIGHT),
+    ("Booked Wt %", "Booked Wt %", ColKind.PCT_WEIGHT),
     ("Amount", "Amount", ColKind.AMOUNT),
-)
-
-LEGEND_TEXT = (
-    "📌 Legend: "
-    "🟠 Cash Scheme (Joinings + Amount only) | "
-    "🟢 Weight Scheme (Joinings + Booked Wt + Amount) | "
-    "🟧 e-Gold App (Sales Man blank) | "
-    "📌 TOTAL = branch-wise total | "
-    "🔴 GRAND TOTAL = overall total | "
-    "Zero weight/amount shown as blank; zero counts shown as '-'. | "
-    "Scheme type and report name from the Scheme Master. "
-    "Scheme variants are grouped under one Report Scheme Name. "
-    "Booked Wt from Weight Schemes only."
+    ("Amount %", "Amount %", ColKind.PCT_AMOUNT),
 )
 
 
@@ -1294,6 +1303,9 @@ def _value_style(style: str, kind: ColKind):
 
     if style == STYLE_DAY:
         return FONT_TOTAL, FILL_JOINING_COL, BORDER_THIN
+
+    if kind in (ColKind.PCT_COUNT, ColKind.PCT_WEIGHT, ColKind.PCT_AMOUNT):
+        return FONT_PCT, KIND_FILL[kind], BORDER_THIN
 
     return FONT_DATA, KIND_FILL[kind], BORDER_THIN
 
@@ -1573,7 +1585,40 @@ def build_scheme_joining_excel(
             for key in schemes_ordered
         }
 
-    total_values = summarize_all(filtered_df)
+    # --------------------------------------------------------
+    # PERCENTAGE HELPER
+    # --------------------------------------------------------
+
+    def make_pct_attacher(
+        base_totals: Dict[SchemeKey, Dict[str, float]]
+    ):
+        def attach(
+            values: Dict[SchemeKey, Dict[str, float]]
+        ) -> Dict[SchemeKey, Dict[str, float]]:
+            out: Dict[SchemeKey, Dict[str, float]] = {}
+
+            for key in schemes_ordered:
+                merged = dict(values.get(key, {}))
+
+                base = base_totals.get(key, {})
+
+                j = float(merged.get("Joinings", 0) or 0)
+                w = float(merged.get("Booked Wt", 0) or 0)
+                a = float(merged.get("Amount", 0) or 0)
+
+                j_base = float(base.get("Joinings", 0) or 0)
+                w_base = float(base.get("Booked Wt", 0) or 0)
+                a_base = float(base.get("Amount", 0) or 0)
+
+                merged["Joinings %"] = (j / j_base * 100.0) if j_base > 0 else 0.0
+                merged["Booked Wt %"] = (w / w_base * 100.0) if w_base > 0 else 0.0
+                merged["Amount %"] = (a / a_base * 100.0) if a_base > 0 else 0.0
+
+                out[key] = merged
+
+            return out
+
+        return attach
 
     # --------------------------------------------------------
     # ROW WRITERS
@@ -1695,11 +1740,19 @@ def build_scheme_joining_excel(
     def write_data_row(
         row: int,
         label: str,
-        values: Dict[str, Dict[str, float]],
+        values: Dict[SchemeKey, Dict[str, float]],
         style: str = STYLE_DATA,
         indent: bool = False,
         highlight_egold: bool = False,
+        is_total_row: bool = False,
     ) -> None:
+        """Write a data / total / grand-total row.
+
+        Percentage rule (applies to every % column):
+
+        * Data rows  -> actual % (0 -> 0.00 %)
+        * Total rows -> 100.00 % IF the scheme has any base value, otherwise 0.00 %
+        """
         font, fill, border = _label_style(style)
 
         if highlight_egold and style == STYLE_DATA:
@@ -1717,10 +1770,35 @@ def build_scheme_joining_excel(
             scheme_vals = values.get(scheme, {})
 
             for key, _hdr, kind in cols:
-                value = scheme_vals.get(key, 0)
+                is_pct = kind in (
+                    ColKind.PCT_COUNT,
+                    ColKind.PCT_WEIGHT,
+                    ColKind.PCT_AMOUNT,
+                )
 
-                if value == 0 and kind in (ColKind.WEIGHT, ColKind.AMOUNT):
-                    value = None
+                if is_pct:
+                    if is_total_row:
+                        base_key = {
+                            ColKind.PCT_COUNT: "Joinings",
+                            ColKind.PCT_WEIGHT: "Booked Wt",
+                            ColKind.PCT_AMOUNT: "Amount",
+                        }[kind]
+
+                        base_val = float(scheme_vals.get(base_key, 0) or 0)
+
+                        value = 100.0 if base_val > 0 else 0.0
+                    else:
+                        value = scheme_vals.get(key, None)
+
+                        if value is None:
+                            value = 0.0
+
+                        value = float(value)
+                else:
+                    value = scheme_vals.get(key, 0)
+
+                    if value == 0 and kind in (ColKind.WEIGHT, ColKind.AMOUNT):
+                        value = None
 
                 cell = ws.cell(row=row, column=col, value=value)
 
@@ -1738,7 +1816,6 @@ def build_scheme_joining_excel(
                 col += 1
 
     def write_day_banner(row: int, text: str, span: int) -> None:
-        """Merged full-width banner row for one date in the day-wise section."""
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=span)
 
         c = ws.cell(row=row, column=1, value=text)
@@ -1755,7 +1832,6 @@ def build_scheme_joining_excel(
         ws.row_dimensions[row].height = 22
 
     def write_day_table_headers(row: int) -> int:
-        """Type group + scheme headers + column headers for the day-wise section."""
         if has_any_cash and has_any_weight:
             write_type_group_row(row)
             row += 1
@@ -1831,6 +1907,19 @@ def build_scheme_joining_excel(
     # BRANCH-WISE SECTION
     # --------------------------------------------------------
 
+    total_values = summarize_all(filtered_df)
+
+    grand_totals_per_scheme: Dict[SchemeKey, Dict[str, float]] = {
+        key: {
+            "Joinings": float(total_values.get(key, {}).get("Joinings", 0) or 0),
+            "Booked Wt": float(total_values.get(key, {}).get("Booked Wt", 0) or 0),
+            "Amount": float(total_values.get(key, {}).get("Amount", 0) or 0),
+        }
+        for key in schemes_ordered
+    }
+
+    attach_pct_period = make_pct_attacher(grand_totals_per_scheme)
+
     row = write_table_headers(row, first_label="Branch")
 
     for branch in branches:
@@ -1839,20 +1928,33 @@ def build_scheme_joining_excel(
         write_data_row(
             row,
             branch,
-            branch_values,
+            attach_pct_period(branch_values),
             highlight_egold=(branch == EGOLD_APP_BRANCH),
         )
 
         row += 1
 
-    write_data_row(row, "📌 TOTAL (Branch-wise)", total_values, STYLE_TOTAL)
+    # Branch-wise TOTAL row
+    write_data_row(
+        row,
+        "📌 TOTAL (Branch-wise)",
+        attach_pct_period(total_values),
+        STYLE_TOTAL,
+        is_total_row=True,
+    )
     row += 1
 
-    write_data_row(row, "🔴 GRAND TOTAL", total_values, STYLE_GRAND)
+    write_data_row(
+        row,
+        "🔴 GRAND TOTAL",
+        attach_pct_period(total_values),
+        STYLE_GRAND,
+        is_total_row=True,
+    )
     row += 2
 
     # --------------------------------------------------------
-    # DAY-WISE SECTION  (each date = merged banner header row)
+    # DAY-WISE SECTION
     # --------------------------------------------------------
 
     write_section(row, "📅 DAY-WISE BSS REPORT", total_cols)
@@ -1869,50 +1971,49 @@ def build_scheme_joining_excel(
 
             day_name = pd.Timestamp(d).strftime("%A")
 
-            # ---- full-width date banner ----
             date_label = f"📅 {d.strftime('%d-%m-%Y')} ({day_name})"
             write_day_banner(row, date_label, total_cols)
             row += 1
 
-            # ---- fresh column headers for this day ----
+            # ---- THIS DAY's totals become the denominator ----
+            day_totals = summarize_all(day_df)
+
+            day_grand_totals: Dict[SchemeKey, Dict[str, float]] = {
+                key: {
+                    "Joinings": float(day_totals.get(key, {}).get("Joinings", 0) or 0),
+                    "Booked Wt": float(day_totals.get(key, {}).get("Booked Wt", 0) or 0),
+                    "Amount": float(day_totals.get(key, {}).get("Amount", 0) or 0),
+                }
+                for key in schemes_ordered
+            }
+
+            attach_pct_day = make_pct_attacher(day_grand_totals)
+
             row = write_day_table_headers(row)
 
-            # ---- branches for this date ----
             for branch in sort_branches_by_df(day_df):
                 branch_values = summarize_all(day_df[day_df["Branch"] == branch])
 
                 write_data_row(
                     row,
                     branch,
-                    branch_values,
+                    attach_pct_day(branch_values),
                     indent=True,
                     highlight_egold=(branch == EGOLD_APP_BRANCH),
                 )
 
                 row += 1
 
-            # ---- per-date subtotal ----
+            # Per-date subtotal
             write_data_row(
                 row,
                 f"📌 {d.strftime('%d-%m-%Y')} TOTAL",
-                summarize_all(day_df),
+                attach_pct_day(day_totals),
                 STYLE_TOTAL,
+                is_total_row=True,
             )
 
-            row += 2  # blank spacer between dates
-
-        write_data_row(row, "📌 DAY-WISE TOTAL", total_values, STYLE_TOTAL)
-        row += 2
-
-    # --------------------------------------------------------
-    # LEGEND
-    # --------------------------------------------------------
-
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=total_cols)
-
-    legend_cell = ws.cell(row=row, column=1, value=LEGEND_TEXT)
-    legend_cell.font = FONT_LEGEND
-    legend_cell.alignment = ALIGN_CENTER
+            row += 2
 
     # --------------------------------------------------------
     # COLUMN WIDTHS
@@ -2122,6 +2223,9 @@ def render_welcome() -> None:
 - 📈 Cumulative joining report
 - 🏢 Branch-wise report
 - 📋 Scheme-wise Cash / Weight columns
+- 📊 **Percentage column for EVERY metric** (Joinings %, Booked Wt %, Amount %)
+- 📅 **Day-wise BSS Report uses each day's own totals as the denominator** (each day sums to 100%)
+- 🔢 **Empty TOTAL rows show 0.00 %, not 100 %**
 - 🗂️ **Scheme Master is the final source of truth**
 - 🚨 **Complete-file validation before report processing**
 - ⚖️ **Booked Wt taken from Weight Schemes only**
@@ -2688,6 +2792,8 @@ def render_footer() -> None:
         "Booked Wt from Weight Schemes only | "
         "Sales-Report Style Excel | "
         "Day-wise banner headers per date | "
+        "Day-wise % uses that day's own totals | "
+        "Empty TOTAL rows show 0.00 % | "
         "Zero weight/amount shown as blank | "
         "Zero counts as '-' | "
         "Scheme names normalized (tier marker preserved) | "
@@ -2915,11 +3021,6 @@ The application will **NOT continue** until the source data or Scheme Master is 
     )
 
     st.subheader("⬇️ Download Report")
-
-    # --------------------------------------------------------
-    # Dynamic file name:
-    # New_Joining_Branch_Wise_BSS_Report_Cumulative_Daily_01Sep2026_20Sep2026.xlsx
-    # --------------------------------------------------------
 
     def _fmt_report_date(d) -> str:
         """Format a date as DDMonYYYY, e.g. 01Sep2026."""
