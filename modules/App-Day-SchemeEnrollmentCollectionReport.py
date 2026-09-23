@@ -815,30 +815,6 @@ def read_uploaded_file(uploaded):
         return None
 
 
-def find_duplicate_transaction_references(dataframe):
-    """Return duplicate nonblank transaction references with source row details."""
-    references = dataframe["Transaction Reference"].astype("string").str.strip()
-    nonblank = references.notna() & references.ne("")
-    duplicate_mask = nonblank & references.duplicated(keep=False)
-    if not duplicate_mask.any():
-        return pd.DataFrame(columns=["Transaction Reference", "Occurrences", "Source Rows"])
-
-    source_rows = pd.Series(range(2, len(dataframe) + 2), index=dataframe.index)
-    duplicate_rows = pd.DataFrame({
-        "Transaction Reference": references[duplicate_mask],
-        "Source Row": source_rows[duplicate_mask],
-    })
-    details = []
-    for reference, group in duplicate_rows.groupby("Transaction Reference", sort=False):
-        rows = group["Source Row"].tolist()
-        details.append({
-            "Transaction Reference": reference,
-            "Occurrences": len(rows),
-            "Source Rows": ", ".join(str(row) for row in rows),
-        })
-    return pd.DataFrame(details)
-
-
 def _transform_branch_pretty(branch):
     if pd.isna(branch) or str(branch).strip() == "":
         return "Bhima Jewellery - Customer"
@@ -1753,15 +1729,6 @@ missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
 if missing_columns:
     st.error("❌ Required columns are missing.")
     st.write("Missing columns:", missing_columns)
-    st.stop()
-
-duplicate_references = find_duplicate_transaction_references(df)
-if not duplicate_references.empty:
-    st.error(
-        "❌ Duplicate Transaction Reference values were detected in the Main Transaction File. "
-        "Please correct the source file before generating the report."
-    )
-    st.dataframe(duplicate_references, width="stretch", hide_index=True)
     st.stop()
 
 df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
