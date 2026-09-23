@@ -786,6 +786,7 @@ if joining_file and payment_file:
         if report is not None:
             st.session_state.report_generated = True
             st.session_state.report_data = report
+            report_count = len(report)
             
             # Success message
             st.success(f"✅ Report Generated Successfully! Total records: {len(report)}")
@@ -825,7 +826,7 @@ if joining_file and payment_file:
                     st.metric(
                         "Active",
                         active_count,
-                        delta=f"{active_count/len(report)*100:.1f}%",
+                        delta=f"{active_count/report_count*100:.1f}%" if report_count else "0.0%",
                         delta_color="normal"
                     )
                 
@@ -834,7 +835,7 @@ if joining_file and payment_file:
                     st.metric(
                         "Completed",
                         completed_count,
-                        delta=f"{completed_count/len(report)*100:.1f}%",
+                        delta=f"{completed_count/report_count*100:.1f}%" if report_count else "0.0%",
                         delta_color="normal"
                     )
                 
@@ -843,7 +844,7 @@ if joining_file and payment_file:
                     st.metric(
                         "Overdue",
                         overdue_count,
-                        delta=f"{overdue_count/len(report)*100:.1f}%",
+                        delta=f"{overdue_count/report_count*100:.1f}%" if report_count else "0.0%",
                         delta_color="inverse"
                     )
                 
@@ -895,10 +896,11 @@ if joining_file and payment_file:
                     )
                 
                 with col3:
+                    max_skipped_months = int(report["Skipped_Months"].max()) if report_count else 0
                     min_skipped = st.number_input(
                         "Min Skipped Months",
                         min_value=0,
-                        max_value=int(report["Skipped_Months"].max()),
+                        max_value=max_skipped_months,
                         value=0
                     )
                 
@@ -1004,8 +1006,8 @@ if joining_file and payment_file:
                 return ''
             
             # Display dataframe with styling
-            styled_df = display_report.style.applymap(color_status, subset=["Status"])
-            styled_df = styled_df.applymap(highlight_skipped, subset=["Skipped_Months"])
+            styled_df = display_report.style.map(color_status, subset=["Status"])
+            styled_df = styled_df.map(highlight_skipped, subset=["Skipped_Months"])
             
             st.dataframe(
                 styled_df,
