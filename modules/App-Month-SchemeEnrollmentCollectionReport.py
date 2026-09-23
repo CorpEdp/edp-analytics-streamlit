@@ -1792,7 +1792,7 @@ def display_avg_ticket_comparison(
 
     st.dataframe(
         styled_df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
@@ -2670,7 +2670,7 @@ def display_aggregated_with_comparison(
 
     st.dataframe(
         styled_df,
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
@@ -3077,7 +3077,7 @@ if daily_schemes:
 
     st.dataframe(
         daily_summary,
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
@@ -3124,7 +3124,7 @@ if sessional_schemes:
 
     st.dataframe(
         sessional_summary,
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
@@ -3362,5 +3362,5 @@ st.download_button(
         "officedocument.spreadsheetml.sheet"
     ),
 
-    use_container_width=True
+    width="stretch"
 )

@@ -407,7 +407,7 @@ if uploaded_file:
             
             # Sample data with better display
             st.markdown("### 📋 Sample Records")
-            st.dataframe(df.head(10), use_container_width=True, height=300)
+            st.dataframe(df.head(10), width="stretch", height=300)
         
         # ==================== CONFIGURATION SECTION ====================
         st.markdown("---")
@@ -649,7 +649,7 @@ if uploaded_file:
                     # Format percentage for display
                     slab_display = slab_summary.copy()
                     slab_display["Percentage"] = slab_display["Percentage"].astype(str) + "%"
-                    st.dataframe(slab_display, use_container_width=True)
+                    st.dataframe(slab_display, width="stretch")
                 with col2:
                     # Pie chart for installment distribution
                     fig = px.pie(
@@ -661,7 +661,7 @@ if uploaded_file:
                     )
                     fig.update_traces(textposition='inside', textinfo='percent+label')
                     fig.update_layout(height=400)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                 
                 # Bar chart
                 fig = px.bar(
@@ -673,7 +673,7 @@ if uploaded_file:
                     color_discrete_sequence=px.colors.qualitative.Set2
                 )
                 fig.update_layout(showlegend=False, height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             
             with tab2:
                 st.subheader("📋 No Payment Passbooks Report")
@@ -697,7 +697,7 @@ if uploaded_file:
                 # Display the report with better styling
                 st.dataframe(
                     filtered_report,
-                    use_container_width=True,
+                    width="stretch",
                     height=500
                 )
                 
@@ -771,7 +771,7 @@ if uploaded_file:
                         data=output_excel,
                         file_name=f"No_Payment_Passbooks_More_Than_{days_threshold}_Days.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
+                        width="stretch"
                     )
                 
                 with col2:
@@ -781,7 +781,7 @@ if uploaded_file:
                         data=csv_data,
                         file_name=f"No_Payment_Passbooks_More_Than_{days_threshold}_Days.csv",
                         mime="text/csv",
-                        use_container_width=True
+                        width="stretch"
                     )
             
             with tab3:
@@ -838,7 +838,7 @@ if uploaded_file:
                                 st.metric("🏆 Max Passbooks/Phone", campaign_summary["Passbook Count"].max())
                             
                             # Display campaign data
-                            st.dataframe(campaign_summary, use_container_width=True)
+                            st.dataframe(campaign_summary, width="stretch")
                             
                             # Distribution chart
                             fig = px.histogram(
@@ -848,7 +848,7 @@ if uploaded_file:
                                 color_discrete_sequence=["#667eea"]
                             )
                             fig.update_layout(xaxis_title="Number of Passbooks", yaxis_title="Count", height=400)
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width="stretch")
                             
                             # Download campaign report
                             st.subheader("📥 Download Campaign Report")
@@ -891,7 +891,7 @@ if uploaded_file:
                                     data=output_campaign,
                                     file_name=f"Campaign_Report_No_Payment_More_Than_{days_threshold}_Days.xlsx",
                                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    use_container_width=True
+                                    width="stretch"
                                 )
                             
                             with col2:
@@ -908,7 +908,7 @@ if uploaded_file:
                                     data=campaign_csv,
                                     file_name=f"Campaign_Report_No_Payment_More_Than_{days_threshold}_Days.csv",
                                     mime="text/csv",
-                                    use_container_width=True
+                                    width="stretch"
                                 )
                         else:
                             st.warning("⚠️ No valid phone numbers found for campaign report")
@@ -930,7 +930,7 @@ if uploaded_file:
                     color_discrete_sequence=["#764ba2"]
                 )
                 fig.update_layout(xaxis_title="Days Without Payment", yaxis_title="Number of Passbooks", height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 
                 # Last payment date distribution
                 st.subheader("Last Payment Date Distribution")
@@ -944,7 +944,7 @@ if uploaded_file:
                     color_discrete_sequence=["#667eea"]
                 )
                 fig.update_layout(xaxis_title="Date", yaxis_title="Number of Passbooks", height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 
                 # Top 10 most inactive
                 st.subheader("Top 10 Passbooks - Longest Without Payment")
@@ -964,7 +964,7 @@ if uploaded_file:
                     color_continuous_scale="Reds"
                 )
                 fig.update_layout(xaxis_title="Passbook Number", yaxis_title="Days Without Payment", height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         
     except Exception as e:
         st.error(f"❌ An error occurred: {str(e)}")

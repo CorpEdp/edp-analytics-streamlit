@@ -430,7 +430,7 @@ def manual_column_mapping(raw_df):
     
     # Show a preview of the data
     st.write("### Data Preview (first 5 rows):")
-    st.dataframe(raw_df.head(5), use_container_width=True)
+    st.dataframe(raw_df.head(5), width="stretch")
     
     st.write("### Map Your Columns to Required Fields:")
     
@@ -482,7 +482,7 @@ def manual_column_mapping(raw_df):
     
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        if st.button("✅ Apply Manual Mapping", use_container_width=True):
+        if st.button("✅ Apply Manual Mapping", width="stretch"):
             return mapping
     
     return None
@@ -1256,7 +1256,7 @@ with st.expander("📋 File Reading Details", expanded=False):
     st.write("**Detected column names:**")
     st.write(list(raw_df.columns))
     st.write("**Data Preview (first 5 rows):**")
-    st.dataframe(raw_df.head(5), use_container_width=True)
+    st.dataframe(raw_df.head(5), width="stretch")
 
 # Check if we have a saved manual mapping or need to auto-map
 if st.session_state.manual_mapping is not None and st.session_state.mapping_applied:
@@ -1320,7 +1320,7 @@ if df.empty:
     # Show the data preview to help diagnose
     with st.expander("📊 View Raw Data Preview", expanded=True):
         st.write("Raw data columns:", list(raw_df.columns))
-        st.dataframe(raw_df.head(10), use_container_width=True)
+        st.dataframe(raw_df.head(10), width="stretch")
     
     st.stop()
 
@@ -1476,23 +1476,23 @@ else:
 if not trend_summary.empty and len(trend_summary) > 1:
     st.divider()
     st.subheader(trend_title)
-    st.dataframe(trend_summary, use_container_width=True, hide_index=True)
+    st.dataframe(trend_summary, width="stretch", hide_index=True)
 
 st.divider()
 st.subheader("1️⃣ E-GOLD APP Agent Daily Call Summary")
-st.dataframe(agent_summary, use_container_width=True, hide_index=True)
+st.dataframe(agent_summary, width="stretch", hide_index=True)
 
 st.divider()
 st.subheader("2️⃣ Disposition Summary")
-st.dataframe(disposition_summary, use_container_width=True, hide_index=True)
+st.dataframe(disposition_summary, width="stretch", hide_index=True)
 
 st.divider()
 st.subheader("3️⃣ Call Type Summary")
-st.dataframe(call_type_summary, use_container_width=True, hide_index=True)
+st.dataframe(call_type_summary, width="stretch", hide_index=True)
 
 st.divider()
 st.subheader("4️⃣ Dialing Mode Summary")
-st.dataframe(dialing_mode_summary, use_container_width=True, hide_index=True)
+st.dataframe(dialing_mode_summary, width="stretch", hide_index=True)
 
 
 # ============================================================
@@ -1510,7 +1510,7 @@ with st.expander("🔎 Processed Data", expanded=False):
                 display_cols.append(col)
     
     if display_cols:
-        st.dataframe(filtered_df[display_cols], use_container_width=True, hide_index=True)
+        st.dataframe(filtered_df[display_cols], width="stretch", hide_index=True)
 
 
 # ============================================================
@@ -1549,7 +1549,7 @@ st.download_button(
     data=excel_output,
     file_name=filename,
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    use_container_width=True,
+    width="stretch",
 )
 
 st.success("✅ Excel report contains two sheets: `Final Summary` (Sheet 1) and `Raw Data` (Sheet 2)")

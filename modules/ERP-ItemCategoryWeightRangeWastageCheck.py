@@ -188,7 +188,7 @@ if f1 and f2:
     
     # Display results
     st.subheader("📋 Comparison Results")
-    st.dataframe(out, use_container_width=True, height=400)
+    st.dataframe(out, width="stretch", height=400)
     
     # Filter options
     filter_col1, filter_col2 = st.columns(2)
@@ -200,7 +200,7 @@ if f1 and f2:
         )
     
     filtered_out = out[out["Status"].isin(status_filter)]
-    st.dataframe(filtered_out, use_container_width=True)
+    st.dataframe(filtered_out, width="stretch")
     
     # Export options
     st.subheader("💾 Export Results")
@@ -286,7 +286,7 @@ if f1 and f2:
             {"Key Field": k, "File 1 Column": mapping[k][0], "File 2 Column": mapping[k][1]}
             for k in REQUIRED_KEYS
         ])
-        st.dataframe(mapping_df, use_container_width=True)
+        st.dataframe(mapping_df, width="stretch")
 
 else:
     st.info("👈 Please upload two files to begin comparison")

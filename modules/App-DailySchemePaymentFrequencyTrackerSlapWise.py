@@ -1294,7 +1294,7 @@ def render_paginated_dataframe(df, page_size=50, key_suffix=""):
     total_pages = (total_rows + page_size - 1) // page_size
     
     if total_pages == 1:
-        st.dataframe(df, use_container_width=True, height=400)
+        st.dataframe(df, width="stretch", height=400)
         return
     
     col1, col2, col3 = st.columns([2, 3, 2])
@@ -1320,7 +1320,7 @@ def render_paginated_dataframe(df, page_size=50, key_suffix=""):
     end_idx = min(start_idx + page_size, total_rows)
     df_page = df.iloc[start_idx:end_idx]
     
-    st.dataframe(df_page, use_container_width=True, height=400)
+    st.dataframe(df_page, width="stretch", height=400)
     progress = (page / total_pages) * 100
     st.progress(progress / 100)
 
@@ -1394,7 +1394,7 @@ def main():
         with col2:
             cat_b = st.number_input("Category B (≤ days)", 8, 50, 50, key="cat_b_large")
         
-        if st.button("🔄 Update Limits", type="primary", use_container_width=True):
+        if st.button("🔄 Update Limits", type="primary", width="stretch"):
             if cat_b > cat_a:
                 st.session_state.slab_config = {
                     "gold": {"slab1_max": cat_a, "slab2_min": cat_a+1, "slab2_max": cat_b, "slab3_min": cat_b+1},
@@ -1442,9 +1442,9 @@ def main():
                 st.success(f"✅ {len(df):,} transactions loaded")
                 
                 with st.expander("Preview (first 5 rows)"):
-                    st.dataframe(df.head(5), use_container_width=True)
+                    st.dataframe(df.head(5), width="stretch")
                 
-                if st.button("🔄 Process Data", type="primary", use_container_width=True):
+                if st.button("🔄 Process Data", type="primary", width="stretch"):
                     with st.spinner(f"Processing {len(df):,} transactions..."):
                         processed = process_daily_scheme_data(df, st.session_state.slab_config)
                         st.session_state.raw_data = df
@@ -1466,7 +1466,7 @@ def main():
         
         st.markdown("---")
         
-        if st.button("📋 Load Sample Data", use_container_width=True):
+        if st.button("📋 Load Sample Data", width="stretch"):
             sample = create_daily_scheme_data()
             processed = process_daily_scheme_data(sample, st.session_state.slab_config)
             st.session_state.raw_data = sample
@@ -1563,7 +1563,7 @@ def main():
                         plot_bgcolor='rgba(0,0,0,0)',
                         font=dict(family="Inter, sans-serif")
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
         
         with col2:
             if category_summary is not None and not category_summary.empty:
@@ -1582,7 +1582,7 @@ def main():
                         plot_bgcolor='rgba(0,0,0,0)',
                         font=dict(family="Inter, sans-serif")
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
         
         # Customer Distribution by Passbook Count
         st.markdown('<div class="section-header">👥 Customer Distribution</div>', unsafe_allow_html=True)
@@ -1815,7 +1815,7 @@ def main():
                 plot_bgcolor='rgba(0,0,0,0)',
                 font=dict(family="Inter, sans-serif")
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
         else:
             st.info("No customers with multiple passbooks found. All customers have exactly 1 passbook.")
@@ -1973,7 +1973,7 @@ def main():
                     if col in df_formatted:
                         df_formatted[col] = df_formatted[col].apply(lambda x: f"₹{int(x):,}")
                 
-                st.dataframe(df_formatted, use_container_width=True)
+                st.dataframe(df_formatted, width="stretch")
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -2009,7 +2009,7 @@ def main():
                         plot_bgcolor='rgba(0,0,0,0)',
                         font=dict(family="Inter, sans-serif")
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
         
         # SUB-TAB 2: Last Payment Category
         with sub_tab2:
@@ -2057,7 +2057,7 @@ def main():
                     if col in df_formatted:
                         df_formatted[col] = df_formatted[col].apply(lambda x: f"₹{int(x):,}")
                 
-                st.dataframe(df_formatted, use_container_width=True)
+                st.dataframe(df_formatted, width="stretch")
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -2093,7 +2093,7 @@ def main():
                         plot_bgcolor='rgba(0,0,0,0)',
                         font=dict(family="Inter, sans-serif")
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
     
     # ============================================================
     # TAB 6: CHARTS
@@ -2126,7 +2126,7 @@ def main():
                     font=dict(family="Inter, sans-serif"),
                     bargap=0.1
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         
         if multi_passbook_customers is not None and not multi_passbook_customers.empty:
             st.markdown("#### 📊 Multi-Passbook Customer Analysis")
@@ -2146,7 +2146,7 @@ def main():
                 plot_bgcolor='rgba(0,0,0,0)',
                 font=dict(family="Inter, sans-serif")
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         
         if category_summary is not None and not category_summary.empty:
             st.markdown("#### 📊 Passbooks by Average Payment Frequency")
@@ -2166,7 +2166,7 @@ def main():
                 plot_bgcolor='rgba(0,0,0,0)',
                 font=dict(family="Inter, sans-serif")
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         
         if passbook_summary:
             st.markdown("#### 💰 Total Saved by Payment Status")
@@ -2192,7 +2192,7 @@ def main():
                     plot_bgcolor='rgba(0,0,0,0)',
                     font=dict(family="Inter, sans-serif")
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
     
     # ============================================================
     # TAB 7: EXPORT
@@ -2300,7 +2300,7 @@ def main():
         st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
         st.markdown("#### 📦 Complete Excel Report (All Sheets)")
         
-        if st.button("📥 Download Complete Excel Report", type="primary", use_container_width=True):
+        if st.button("📥 Download Complete Excel Report", type="primary", width="stretch"):
             with st.spinner("Generating complete report..."):
                 output = io.BytesIO()
                 

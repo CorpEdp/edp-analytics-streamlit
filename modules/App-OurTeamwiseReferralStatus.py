@@ -1042,7 +1042,7 @@ def process_data(df):
                 st.write("**Registered Date Samples:**")
                 if not df["Registered Date"].isna().all():
                     sample_reg = df[["Original Registered Date", "Registered Date"]].head(10)
-                    st.dataframe(sample_reg, use_container_width=True)
+                    st.dataframe(sample_reg, width="stretch")
                     
                     if df["Registered Date"].notna().any():
                         reg_years = df[df["Registered Date"].notna()]["Registered Date"].dt.year.value_counts().sort_index()
@@ -1053,7 +1053,7 @@ def process_data(df):
                 st.write("**Joined Date Samples:**")
                 if not df["Joined Date"].isna().all():
                     sample_join = df[["Original Joined Date", "Joined Date"]].head(10)
-                    st.dataframe(sample_join, use_container_width=True)
+                    st.dataframe(sample_join, width="stretch")
                     
                     if df["Joined Date"].notna().any():
                         join_years = df[df["Joined Date"].notna()]["Joined Date"].dt.year.value_counts().sort_index()
@@ -1064,12 +1064,12 @@ def process_data(df):
                 st.warning(f"⚠️ {len(future_join)} future Joined Dates found")
                 st.dataframe(
                     future_join[["Original Joined Date", "Joined Date", "Employee Code", "Employee Name"]].head(20),
-                    use_container_width=True
+                    width="stretch"
                 )
                 
                 future_years = future_join["Joined Date"].dt.year.value_counts().sort_index()
                 st.write("**Future Years Distribution:**")
-                st.dataframe(future_years, use_container_width=True)
+                st.dataframe(future_years, width="stretch")
                 
                 if st.button("🔧 Auto-fix Future Dates (subtract 100 years from 1900s dates)"):
                     st.info("Will fix in next step")
@@ -1862,7 +1862,7 @@ def render_category_split_tables(registered_df, joined_df, employee_dict, select
                 show_note=False,
                 total_label="INBOUND TOTAL"
             )
-            st.dataframe(in_styled, use_container_width=True, hide_index=True)
+            st.dataframe(in_styled, width="stretch", hide_index=True)
         else:
             st.info("No Inbound employees in the current selection.")
     with col_out:
@@ -1877,7 +1877,7 @@ def render_category_split_tables(registered_df, joined_df, employee_dict, select
                 show_note=False,
                 total_label="OUTBOUND TOTAL"
             )
-            st.dataframe(out_styled, use_container_width=True, hide_index=True)
+            st.dataframe(out_styled, width="stretch", hide_index=True)
         else:
             st.info("No Outbound employees in the current selection.")
 
@@ -2006,10 +2006,10 @@ def main():
                     data=json.dumps(st.session_state.employees, indent=2),
                     file_name="employees.json",
                     mime="application/json",
-                    use_container_width=True
+                    width="stretch"
                 )
 
-                if st.button("🔄 Reset to Default Employees", use_container_width=True):
+                if st.button("🔄 Reset to Default Employees", width="stretch"):
                     st.session_state.employees = DEFAULT_EMPLOYEES.copy()
                     st.rerun()
 
@@ -2053,7 +2053,7 @@ def main():
                             clean_name = clean_name[:-len(suffix)].strip()
                     full_name = f"{clean_name} {type_suffix}".strip()
 
-                if st.button("💾 Save Employee", use_container_width=True):
+                if st.button("💾 Save Employee", width="stretch"):
                     if new_code and new_name:
                         if edit_code != "— New employee —" and edit_code != new_code:
                             del st.session_state.employees[edit_code]
@@ -2078,7 +2078,7 @@ def main():
                     placeholder="Emp111111,Alex Kumar (IN)\nEmp222222,Priya Rao (OUT)\nEmp333333,Ravi Singh (OUT-Left)", 
                     height=120
                 )
-                if st.button("➕ Add All", use_container_width=True):
+                if st.button("➕ Add All", width="stretch"):
                     added, skipped = 0, 0
                     for line in bulk_text.splitlines():
                         line = line.strip()
@@ -2202,7 +2202,7 @@ def main():
             f"🔁 {len(duplicates)} possible duplicate row(s) detected "
             f"(same Referee Phone)"
         ):
-            st.dataframe(duplicates, use_container_width=True, hide_index=True)
+            st.dataframe(duplicates, width="stretch", hide_index=True)
     elif referee_phone_col is not None:
         st.success("✅ No duplicate Referee Phone numbers found.")
 
@@ -2284,7 +2284,7 @@ def main():
             start_date = end_date = None
 
         st.divider()
-        if st.button("♻️ Reset All Filters", use_container_width=True):
+        if st.button("♻️ Reset All Filters", width="stretch"):
             st.rerun()
 
     # Store date range text for report headers
@@ -2439,7 +2439,7 @@ def main():
         selected_codes,
         "Overall Details"
     )
-    st.dataframe(overall_styled, use_container_width=True, hide_index=True)
+    st.dataframe(overall_styled, width="stretch", hide_index=True)
 
     render_category_split_tables(overall_registered_df, overall_joined_df, employee_dict, selected_codes, "Overall Details")
     
@@ -2475,7 +2475,7 @@ def main():
         selected_codes,
         "Current Month"
     )
-    st.dataframe(month_styled, use_container_width=True, hide_index=True)
+    st.dataframe(month_styled, width="stretch", hide_index=True)
 
     render_category_split_tables(month_registered_df, month_joined_df, employee_dict, selected_codes, "Current Month")
     
@@ -2506,7 +2506,7 @@ def main():
         selected_codes,
         "Today"
     )
-    st.dataframe(today_styled, use_container_width=True, hide_index=True)
+    st.dataframe(today_styled, width="stretch", hide_index=True)
 
     render_category_split_tables(today_registered_df, today_joined_df, employee_dict, selected_codes, "Today")
     
@@ -2527,7 +2527,7 @@ def main():
             data=excel_data,
             file_name=f"Referral_Report_{timestamp}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            width="stretch"
         )
     
     st.divider()
@@ -2638,7 +2638,7 @@ def main():
                 combined_display.style
                 .background_gradient(subset=["Registered", "Joined", "Balance", "Total"], cmap="Oranges")
                 .map(color_balance, subset=["Balance"]),
-                use_container_width=True, hide_index=True
+                width="stretch", hide_index=True
             )
         else:
             combined_display = pd.DataFrame(columns=["Date", "Registered", "Joined", "Balance", "Total"])
@@ -2649,11 +2649,11 @@ def main():
         with c1:
             conv_fig = create_conversion_chart(registered_count, joined_count)
             if conv_fig:
-                st.plotly_chart(conv_fig, use_container_width=True)
+                st.plotly_chart(conv_fig, width="stretch")
         with c2:
             perf_fig = create_employee_performance_chart(employee_summary)
             if perf_fig:
-                st.plotly_chart(perf_fig, use_container_width=True)
+                st.plotly_chart(perf_fig, width="stretch")
 
         registered_day = create_day_wise_summary(registered_df, "Registered Date", "Registered")
         joined_day = create_day_wise_summary(joined_df, "Joined Date", "Joined")
@@ -2663,12 +2663,12 @@ def main():
             joined_day[joined_day["Date"] != "OVERALL TOTAL"] if not joined_day.empty else pd.DataFrame()
         )
         if trend_fig:
-            st.plotly_chart(trend_fig, use_container_width=True)
+            st.plotly_chart(trend_fig, width="stretch")
 
         st.subheader("⚖️ Balance Analysis")
         balance_fig, balance_data = create_balance_chart(registered_day, joined_day)
         if balance_fig and balance_data is not None:
-            st.plotly_chart(balance_fig, use_container_width=True)
+            st.plotly_chart(balance_fig, width="stretch")
             b1, b2, b3 = st.columns(3)
             with b1:
                 overall_balance = balance_data["Registered"].sum() - balance_data["Joined"].sum()
@@ -2706,7 +2706,7 @@ def main():
             ])
             st.dataframe(
                 paginate_dataframe(registered_employee, key_prefix="reg_employee"),
-                use_container_width=True, hide_index=True
+                width="stretch", hide_index=True
             )
 
             registered_only = registered_df.groupby(registered_df["Registered Date"].dt.date).size().reset_index(name="Count")
@@ -2721,7 +2721,7 @@ def main():
             ])
             st.dataframe(
                 registered_only.style.background_gradient(subset=["Registered Count"], cmap="Greens"),
-                use_container_width=True, hide_index=True
+                width="stretch", hide_index=True
             )
         else:
             st.info("No registration data available.")
@@ -2757,7 +2757,7 @@ def main():
             ])
             st.dataframe(
                 paginate_dataframe(joined_employee, key_prefix="join_employee"),
-                use_container_width=True, hide_index=True
+                width="stretch", hide_index=True
             )
 
             joined_only = joined_df.groupby(joined_df["Joined Date"].dt.date).size().reset_index(name="Joined Count")
@@ -2778,7 +2778,7 @@ def main():
             ])
             st.dataframe(
                 joined_only.style.background_gradient(subset=["Joined Count"], cmap="Blues"),
-                use_container_width=True, hide_index=True
+                width="stretch", hide_index=True
             )
         else:
             st.info("No joined data available.")
@@ -2842,7 +2842,7 @@ def main():
             lookup_joined_rows = joined_df[joined_df["Employee Code"] == lookup_code].copy()
             if not lookup_joined_rows.empty:
                 lookup_joined_rows = lookup_joined_rows[["Employee Code", "Employee Name", "Joined Date"]].sort_values("Joined Date")
-                st.dataframe(lookup_joined_rows, use_container_width=True, hide_index=True)
+                st.dataframe(lookup_joined_rows, width="stretch", hide_index=True)
             else:
                 st.info(f"No enrolment (joined) records found for {lookup_name} in the current filters.")
 
@@ -2878,7 +2878,7 @@ def main():
             .map(color_conversion, subset=["Conversion %"])
             .format({"Reg %": "{:.1f}%", "Join %": "{:.1f}%", "Conversion %": "{:.1f}%", 
                     "Enrolment Amount": "{:,.3f}", "Enrolment %": "{:.1f}%"}),
-            use_container_width=True, hide_index=True
+            width="stretch", hide_index=True
         )
 
         st.markdown("##### 🟢🔴 Inbound vs Outbound — Employee-wise")
@@ -2894,7 +2894,7 @@ def main():
                     .map(color_conversion, subset=["Conversion %"])
                     .format({"Reg %": "{:.1f}%", "Join %": "{:.1f}%", "Conversion %": "{:.1f}%",
                             "Enrolment Amount": "{:,.3f}", "Enrolment %": "{:.1f}%"}),
-                    use_container_width=True, hide_index=True
+                    width="stretch", hide_index=True
                 )
             else:
                 st.info("No Inbound employees in the current selection.")
@@ -2907,7 +2907,7 @@ def main():
                     .map(color_conversion, subset=["Conversion %"])
                     .format({"Reg %": "{:.1f}%", "Join %": "{:.1f}%", "Conversion %": "{:.1f}%",
                             "Enrolment Amount": "{:,.3f}", "Enrolment %": "{:.1f}%"}),
-                    use_container_width=True, hide_index=True
+                    width="stretch", hide_index=True
                 )
             else:
                 st.info("No Outbound employees in the current selection.")
@@ -2954,7 +2954,7 @@ def main():
             .background_gradient(subset=["Registered", "Joined", "Total"], cmap="Purples")
             .map(color_balance, subset=["Balance"])
             .format({"Enrolment Amount": "{:,.3f}"}),
-            use_container_width=True, hide_index=True
+            width="stretch", hide_index=True
         )
 
     # ---------------- PERFORMANCE TAB ----------------
@@ -3178,7 +3178,7 @@ def main():
                         "Balance": "{:,.0f}",
                         "Total": "{:,.0f}"
                     }),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
                 
@@ -3204,7 +3204,7 @@ def main():
                         height=400,
                         yaxis=dict(range=[0, max(perf_df["Conversion %"].max() * 1.2, 10)])
                     )
-                    st.plotly_chart(fig_conv, use_container_width=True)
+                    st.plotly_chart(fig_conv, width="stretch")
                 
                 with chart_col2:
                     fig_enrol = go.Figure()
@@ -3222,7 +3222,7 @@ def main():
                         yaxis_title="Enrolment Amount (₹)",
                         height=400
                     )
-                    st.plotly_chart(fig_enrol, use_container_width=True)
+                    st.plotly_chart(fig_enrol, width="stretch")
                 
                 chart_col3, chart_col4 = st.columns(2)
                 
@@ -3247,7 +3247,7 @@ def main():
                         barmode="group",
                         height=400
                     )
-                    st.plotly_chart(fig_comp, use_container_width=True)
+                    st.plotly_chart(fig_comp, width="stretch")
                 
                 with chart_col4:
                     fig_enrol_pie = go.Figure()
@@ -3263,7 +3263,7 @@ def main():
                         title="Enrolment Amount Distribution",
                         height=400
                     )
-                    st.plotly_chart(fig_enrol_pie, use_container_width=True)
+                    st.plotly_chart(fig_enrol_pie, width="stretch")
                 
                 st.subheader("🏅 Top Performers")
                 top_n = st.slider("Number of top performers to show", 1, min(10, len(perf_df)), 3, key="perf_top_n")
@@ -3279,7 +3279,7 @@ def main():
                         top_by_reg.style
                         .background_gradient(subset=["Registered"], cmap="Blues")
                         .format({"Conversion %": "{:.1f}%", "Enrolment Amount": "{:,.3f}"}),
-                        use_container_width=True, hide_index=True
+                        width="stretch", hide_index=True
                     )
                 
                 with col2:
@@ -3288,7 +3288,7 @@ def main():
                         top_by_conv.style
                         .background_gradient(subset=["Conversion %"], cmap="Greens")
                         .format({"Conversion %": "{:.1f}%", "Enrolment Amount": "{:,.3f}"}),
-                        use_container_width=True, hide_index=True
+                        width="stretch", hide_index=True
                     )
                 
                 with col3:
@@ -3297,7 +3297,7 @@ def main():
                         top_by_enrol.style
                         .background_gradient(subset=["Enrolment Amount"], cmap="Oranges")
                         .format({"Conversion %": "{:.1f}%", "Enrolment Amount": "{:,.3f}"}),
-                        use_container_width=True, hide_index=True
+                        width="stretch", hide_index=True
                     )
                 
                 with st.expander("📊 Performance Statistics Summary"):
@@ -3321,7 +3321,7 @@ def main():
                         ]
                     }
                     stats_df = pd.DataFrame(stats_data)
-                    st.dataframe(stats_df, use_container_width=True, hide_index=True)
+                    st.dataframe(stats_df, width="stretch", hide_index=True)
         else:
             st.info("No performance data available for the selected filters.")
 
@@ -3431,7 +3431,7 @@ def main():
                 st.dataframe(
                     paginate_dataframe(employee_day_data, key_prefix="day_emp")
                     .style.format({"Enrolment Amount": "{:,.3f}"}),
-                    use_container_width=True, hide_index=True
+                    width="stretch", hide_index=True
                 )
                 
                 st.subheader("📊 Pivot View - Daily Activity by Employee")
@@ -3448,7 +3448,7 @@ def main():
                     pivot_combined["Balance"] = pivot_reg.sum(axis=1) - pivot_join.sum(axis=1)
                     pivot_combined.index = pivot_reg.index
                     
-                    st.dataframe(pivot_combined, use_container_width=True)
+                    st.dataframe(pivot_combined, width="stretch")
                 except Exception as e:
                     st.warning(f"Could not create pivot view: {e}")
             else:
@@ -3499,7 +3499,7 @@ def main():
                     st.dataframe(
                         paginate_dataframe(detail_summary, key_prefix="day_detail")
                         .style.format({"Enrolment Amount": "{:,.3f}"}),
-                        use_container_width=True, hide_index=True
+                        width="stretch", hide_index=True
                     )
                 else:
                     st.info("ℹ️ No activity data available for the selected filters.")
@@ -3544,7 +3544,7 @@ def main():
                         matrix_summary.style
                         .map(color_balance, subset=["Day Balance"])
                         .format({"Day Enrolment Amount": "{:,.3f}"}),
-                        use_container_width=True, hide_index=True
+                        width="stretch", hide_index=True
                     )
                 else:
                     st.info("ℹ️ No consolidated data available for the selected filters.")
@@ -3615,14 +3615,14 @@ def main():
                 .background_gradient(subset=["Registered", "Joined"], cmap="Blues")
                 .map(color_balance, subset=["Balance"])
                 .format({"Enrolment Amount": "{:,.3f}"}),
-                use_container_width=True, hide_index=True
+                width="stretch", hide_index=True
             )
             fig = go.Figure(data=[
                 go.Bar(name="Registered", x=month_summary["Month"], y=month_summary["Registered"], marker_color="#1E88E5"),
                 go.Bar(name="Joined", x=month_summary["Month"], y=month_summary["Joined"], marker_color="#43A047"),
             ])
             fig.update_layout(title="Monthly Registered vs Joined", barmode="group", height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No data available to build a monthly summary.")
         
@@ -3649,7 +3649,7 @@ def main():
                 st.dataframe(
                     paginate_dataframe(employee_monthly, key_prefix="month_emp")
                     .style.format({"Enrolment Amount": "{:,.3f}"}),
-                    use_container_width=True, hide_index=True
+                    width="stretch", hide_index=True
                 )
                 
                 st.subheader("📊 Pivot View - Monthly Activity by Employee")
@@ -3668,7 +3668,7 @@ def main():
                     
                     pivot_combined.index = pivot_reg.index
                     
-                    st.dataframe(pivot_combined, use_container_width=True)
+                    st.dataframe(pivot_combined, width="stretch")
                 except Exception as e:
                     st.warning(f"Could not create pivot view: {e}")
             else:
@@ -3692,7 +3692,7 @@ def main():
                 st.dataframe(
                     paginate_dataframe(employee_monthly, key_prefix="month_emp_active")
                     .style.format({"Enrolment Amount": "{:,.3f}"}),
-                    use_container_width=True, hide_index=True
+                    width="stretch", hide_index=True
                 )
                 
                 st.subheader("📊 Pivot View - Monthly Activity by Employee")
@@ -3711,7 +3711,7 @@ def main():
                     
                     pivot_combined.index = pivot_reg.index
                     
-                    st.dataframe(pivot_combined, use_container_width=True)
+                    st.dataframe(pivot_combined, width="stretch")
                 except Exception as e:
                     st.warning(f"Could not create pivot view: {e}")
             else:
@@ -3723,7 +3723,7 @@ def main():
         with st.expander("📄 View Raw Registered Data", expanded=False):
             if not registered_df.empty:
                 render_amount_cards([("📝 Total Rows", f"{len(registered_df):,}", "#1E88E5")])
-                st.dataframe(paginate_dataframe(registered_df, key_prefix="raw_reg"), use_container_width=True, hide_index=True)
+                st.dataframe(paginate_dataframe(registered_df, key_prefix="raw_reg"), width="stretch", hide_index=True)
             else:
                 st.info("No registered data available for the selected filters.")
 
@@ -3733,7 +3733,7 @@ def main():
                 st.dataframe(
                     paginate_dataframe(joined_df, key_prefix="raw_join")
                     .style.format({"Enrolment Amount": "{:,.3f}"}),
-                    use_container_width=True, hide_index=True
+                    width="stretch", hide_index=True
                 )
             else:
                 st.info("No joined data available for the selected filters.")
@@ -3741,7 +3741,7 @@ def main():
         with st.expander("📋 View All Raw Data", expanded=False):
             if not df_filtered.empty:
                 render_amount_cards([("📊 Total Rows", f"{len(df_filtered):,}", "#FB8C00")])
-                st.dataframe(paginate_dataframe(df_filtered, key_prefix="raw_all"), use_container_width=True, hide_index=True)
+                st.dataframe(paginate_dataframe(df_filtered, key_prefix="raw_all"), width="stretch", hide_index=True)
             else:
                 st.info("No data available.")
 
@@ -3794,7 +3794,7 @@ def main():
             anomalies = anomalies[anomalies["Registered Date"] > anomalies["Joined Date"]]
             if len(anomalies) > 0:
                 st.warning(f"⚠️ {len(anomalies)} record(s) have a registered date after the joined date")
-                st.dataframe(anomalies, use_container_width=True, hide_index=True)
+                st.dataframe(anomalies, width="stretch", hide_index=True)
             else:
                 st.success("✅ No date anomalies found (registered date always ≤ joined date)")
 
@@ -3894,7 +3894,7 @@ def main():
                     preview_df[pct_col] = preview_df[pct_col].map(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
             if "Enrolment Amount" in preview_df.columns:
                 preview_df["Enrolment Amount"] = preview_df["Enrolment Amount"].map(lambda x: format_enrolment_amount(x) if pd.notna(x) else "")
-            st.dataframe(preview_df, use_container_width=True, hide_index=True)
+            st.dataframe(preview_df, width="stretch", hide_index=True)
         else:
             st.info("No Performance Summary data available for preview.")
 
@@ -3924,7 +3924,7 @@ def main():
                     data=zip_buffer,
                     file_name=f"Employee_Referral_Reports_{date_str}_{timestamp}.zip",
                     mime="application/zip",
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.stop()
             
@@ -3933,7 +3933,7 @@ def main():
                 data=excel_data,
                 file_name=file_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
+                width="stretch"
             )
             st.caption(f"📅 Report covers: **{date_range_text}**")
         with c2:
@@ -3944,7 +3944,7 @@ def main():
                     data=csv_data,
                     file_name=f"Employee_Referral_Summary_{date_str}_{timestamp}.csv",
                     mime="text/csv",
-                    use_container_width=True
+                    width="stretch"
                 )
 
         st.caption("💡 The enhanced Excel report includes:")

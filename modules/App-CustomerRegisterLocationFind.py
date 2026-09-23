@@ -1217,7 +1217,7 @@ with tab_overview:
             "100%",
         ],
     }
-    st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(summary_data), width="stretch", hide_index=True)
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -1251,7 +1251,7 @@ with tab_results:
     display_cols = [col for col in display_cols if col in filtered_df.columns]
 
     st.caption(f"Showing {len(filtered_df):,} of {total_customers:,} customers")
-    st.dataframe(filtered_df[display_cols], use_container_width=True, hide_index=True)
+    st.dataframe(filtered_df[display_cols], width="stretch", hide_index=True)
 
 with tab_unknown:
     unknown_df = df[df["State"] == "Unknown"]
@@ -1262,7 +1262,7 @@ with tab_unknown:
         st.write("**Top 20 unknown addresses (most frequent first):**")
         st.dataframe(
             pd.DataFrame({"Address": unique_unknown.index[:20], "Count": unique_unknown.values[:20]}),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -1289,7 +1289,7 @@ with tab_download:
             excel_file.getvalue(),
             "Customer_State_Language_Report.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
+            width="stretch",
         )
 
     with col2:
@@ -1299,7 +1299,7 @@ with tab_download:
             csv_file,
             "Customer_State_Language_Report.csv",
             "text/csv",
-            use_container_width=True,
+            width="stretch",
         )
 
     with st.expander("📋 Sample Output Preview"):

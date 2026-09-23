@@ -732,7 +732,7 @@ with st.sidebar:
         st.metric("Unmatched", f"{st.session_state.results.get('unmatched', 0):,}")
         
         # Add a reset button
-        if st.button("🔄 Reset All Data", use_container_width=True):
+        if st.button("🔄 Reset All Data", width="stretch"):
             for key in ['processing_complete', 'final_matched', 'internal_matched', 
                        'unmatched_external', 'stats_df', 'stats_dashboard', 
                        'filtered_ext_df', 'fig_funnel', 'fig_gauge', 'fig_donut', 'fig_time']:
@@ -869,11 +869,11 @@ with st.expander("📊 External File Configuration", expanded=True):
                 to_time = st.time_input("To Time", time(23, 59), key="to_time")
             with col3:
                 st.markdown("#### Quick Select")
-                if st.button("Last 7 Days", use_container_width=True):
+                if st.button("Last 7 Days", width="stretch"):
                     from_date = (datetime.now() - timedelta(days=7)).date()
                     to_date = datetime.now().date()
                     st.rerun()
-                if st.button("This Month", use_container_width=True):
+                if st.button("This Month", width="stretch"):
                     from_date = datetime.now().replace(day=1).date()
                     to_date = datetime.now().date()
                     st.rerun()
@@ -898,7 +898,7 @@ with col2:
     process_button = st.button(
         "🚀 START RECONCILIATION", 
         type="primary", 
-        use_container_width=True
+        width="stretch"
     )
 
 # Processing logic
@@ -1135,16 +1135,16 @@ if st.session_state.processing_complete:
         st.markdown("### 📊 Interactive Analytics")
         viz_col1, viz_col2 = st.columns(2)
         with viz_col1:
-            st.plotly_chart(fig_funnel, use_container_width=True, key="funnel_display", config={'displayModeBar': False})
+            st.plotly_chart(fig_funnel, width="stretch", key="funnel_display", config={'displayModeBar': False})
         with viz_col2:
-            st.plotly_chart(fig_gauge, use_container_width=True, key="gauge_display", config={'displayModeBar': False})
+            st.plotly_chart(fig_gauge, width="stretch", key="gauge_display", config={'displayModeBar': False})
         
         viz_col3, viz_col4 = st.columns(2)
         with viz_col3:
-            st.plotly_chart(fig_donut, use_container_width=True, key="donut_display", config={'displayModeBar': False})
+            st.plotly_chart(fig_donut, width="stretch", key="donut_display", config={'displayModeBar': False})
         with viz_col4:
             if fig_time:
-                st.plotly_chart(fig_time, use_container_width=True, key="timeseries_display", config={'displayModeBar': False})
+                st.plotly_chart(fig_time, width="stretch", key="timeseries_display", config={'displayModeBar': False})
             else:
                 st.info("Time series data not available for selected date range")
     
@@ -1156,7 +1156,7 @@ if st.session_state.processing_complete:
     
     with tab1:
         if final_matched is not None and not final_matched.empty:
-            st.dataframe(final_matched, use_container_width=True, height=400)
+            st.dataframe(final_matched, width="stretch", height=400)
             col1, col2, col3 = st.columns([1, 1, 2])
             with col1:
                 csv_final = final_matched.to_csv(index=False).encode('utf-8')
@@ -1166,14 +1166,14 @@ if st.session_state.processing_complete:
                     f"final_matched_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv",
                     key="download_final_matched_csv",
-                    use_container_width=True
+                    width="stretch"
                 )
         else:
             st.info("No final matched records found")
     
     with tab2:
         if internal_matched is not None and not internal_matched.empty:
-            st.dataframe(internal_matched, use_container_width=True, height=400)
+            st.dataframe(internal_matched, width="stretch", height=400)
             csv_internal = internal_matched.to_csv(index=False).encode('utf-8')
             st.download_button(
                 "📥 Download CSV",
@@ -1181,14 +1181,14 @@ if st.session_state.processing_complete:
                 f"internal_matched_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 key="download_internal_matched_csv",
-                use_container_width=True
+                width="stretch"
             )
         else:
             st.info("No internal matched records found")
     
     with tab3:
         if unmatched_external is not None and not unmatched_external.empty:
-            st.dataframe(unmatched_external, use_container_width=True, height=400)
+            st.dataframe(unmatched_external, width="stretch", height=400)
             csv_unmatched = unmatched_external.to_csv(index=False).encode('utf-8')
             st.download_button(
                 "📥 Download CSV",
@@ -1196,14 +1196,14 @@ if st.session_state.processing_complete:
                 f"unmatched_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 key="download_unmatched_csv",
-                use_container_width=True
+                width="stretch"
             )
         else:
             st.success("🎉 All external records matched successfully!")
     
     with tab4:
         if stats_df is not None and not stats_df.empty:
-            st.dataframe(stats_df, use_container_width=True, hide_index=True)
+            st.dataframe(stats_df, width="stretch", hide_index=True)
         else:
             st.info("No statistics available")
     
@@ -1225,7 +1225,7 @@ if st.session_state.processing_complete:
                 excel_report,
                 f"reconciliation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+                width="stretch",
                 key="download_complete_report"
             )
 

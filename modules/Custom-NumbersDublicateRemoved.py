@@ -312,7 +312,7 @@ if uploaded_file:
         
         st.markdown("---")
         st.subheader("📊 File Preview")
-        st.dataframe(df.head(10), use_container_width=True)
+        st.dataframe(df.head(10), width="stretch")
         st.caption(f"📌 Total rows: {len(df):,}")
         
         # Auto-detect phone number columns
@@ -666,7 +666,7 @@ if uploaded_file:
                     
                     # Show sample of cleaned numbers
                     sample_df = df.head(10)[[column, 'cleaned_number', 'Remarks']].copy()
-                    st.dataframe(sample_df, use_container_width=True)
+                    st.dataframe(sample_df, width="stretch")
                 
                 # Show duplicate details
                 with st.expander("🔄 View Duplicate Details", expanded=False):
@@ -689,7 +689,7 @@ if uploaded_file:
                                 axis=1
                             )
                             
-                            st.dataframe(dup_details[[column, 'cleaned_number', 'Occurrence', 'Total_Occurrences', 'Status', 'Remarks']], use_container_width=True)
+                            st.dataframe(dup_details[[column, 'cleaned_number', 'Occurrence', 'Total_Occurrences', 'Status', 'Remarks']], width="stretch")
                             
                             # Show summary of duplicates
                             dup_summary = dup_details.groupby('cleaned_number').agg({
@@ -697,7 +697,7 @@ if uploaded_file:
                             }).reset_index()
                             dup_summary.columns = ['Mobile Number', 'Total Occurrences']
                             st.write("**Summary of duplicates:**")
-                            st.dataframe(dup_summary, use_container_width=True)
+                            st.dataframe(dup_summary, width="stretch")
                     else:
                         st.info("✅ No duplicate numbers found!")
                 
@@ -707,7 +707,7 @@ if uploaded_file:
                                                             "Landline (starts with 0 or 1-5)", "Landline (STD code detected)",
                                                             "Too Short", "Too Long"])]
                     if not invalid_sample.empty:
-                        st.dataframe(invalid_sample[[column, 'cleaned_number', "Remarks"]].head(20), use_container_width=True)
+                        st.dataframe(invalid_sample[[column, 'cleaned_number', "Remarks"]].head(20), width="stretch")
                         st.caption(f"Showing first 20 of {invalid_count:,} invalid records")
                     else:
                         st.info("🎉 No invalid numbers found! All numbers are valid.")
@@ -715,7 +715,7 @@ if uploaded_file:
                 # Show clean data sample
                 with st.expander("✨ View Clean Records Sample (Valid & Unique)", expanded=False):
                     if not clean_df.empty:
-                        st.dataframe(clean_df[[column]].head(20), use_container_width=True)
+                        st.dataframe(clean_df[[column]].head(20), width="stretch")
                         st.caption(f"Showing first 20 of {clean_count:,} clean records")
                         st.success(f"📊 {clean_count:,} clean records ready for download!")
                     else:
@@ -871,7 +871,7 @@ if uploaded_file:
                         data=st.session_state.output_data,
                         file_name="Processed_Mobile_Numbers_With_Remarks.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
+                        width="stretch",
                         key="download_excel_full"
                     )
                 
@@ -881,7 +881,7 @@ if uploaded_file:
                         data=st.session_state.output_data_csv,
                         file_name="Processed_Mobile_Numbers_With_Remarks.csv",
                         mime="text/csv",
-                        use_container_width=True,
+                        width="stretch",
                         key="download_csv_full"
                     )
                 
@@ -896,7 +896,7 @@ if uploaded_file:
                             data=st.session_state.clean_output_data,
                             file_name="Clean_Valid_Unique_Numbers.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True,
+                            width="stretch",
                             key="download_excel_clean"
                         )
                     
@@ -906,7 +906,7 @@ if uploaded_file:
                             data=st.session_state.clean_output_data_csv,
                             file_name="Clean_Valid_Unique_Numbers.csv",
                             mime="text/csv",
-                            use_container_width=True,
+                            width="stretch",
                             key="download_csv_clean"
                         )
                 else:
@@ -979,7 +979,7 @@ if uploaded_file:
                     data=st.session_state.output_data,
                     file_name="Processed_Mobile_Numbers_With_Remarks.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
+                    width="stretch",
                     key="download_excel_full_again"
                 )
             
@@ -989,7 +989,7 @@ if uploaded_file:
                     data=st.session_state.output_data_csv,
                     file_name="Processed_Mobile_Numbers_With_Remarks.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                     key="download_csv_full_again"
                 )
             
@@ -1004,7 +1004,7 @@ if uploaded_file:
                         data=st.session_state.clean_output_data,
                         file_name="Clean_Valid_Unique_Numbers.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
+                        width="stretch",
                         key="download_excel_clean_again"
                     )
                 
@@ -1014,7 +1014,7 @@ if uploaded_file:
                         data=st.session_state.clean_output_data_csv,
                         file_name="Clean_Valid_Unique_Numbers.csv",
                         mime="text/csv",
-                        use_container_width=True,
+                        width="stretch",
                         key="download_csv_clean_again"
                     )
             else:

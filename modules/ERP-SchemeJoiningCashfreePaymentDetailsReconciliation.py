@@ -726,10 +726,10 @@ def render_sidebar():
         "amount": st.sidebar.text_input("Cashfree amount column", ""),
     }
 
-    if st.sidebar.button("🚀 Run Reconciliation", type="primary", use_container_width=True):
+    if st.sidebar.button("🚀 Run Reconciliation", type="primary", width="stretch"):
         st.session_state["run_clicked"] = True
 
-    if st.sidebar.button("♻️ Reset", use_container_width=True):
+    if st.sidebar.button("♻️ Reset", width="stretch"):
         for k in ("erp_file_bytes", "erp_file_name", "cf_file_bytes", "cf_file_name",
                   "erp_sheet", "cf_sheet", "output_df", "summary_df"):
             st.session_state[k] = None
@@ -801,14 +801,14 @@ def render_dashboard(output_df: pd.DataFrame, erp_count: int, cf_count: int) -> 
             "Status": [STATUS_MATCHED, STATUS_NOT_MATCHED, STATUS_DUPLICATE],
             "Count": [matched, unmatched, dup],
         }).set_index("Status")
-        st.bar_chart(dist, use_container_width=True, height=280)
+        st.bar_chart(dist, width="stretch", height=280)
 
     with col_right:
         st.markdown("#### Transactions by Date (Top 15)")
         if not daily.empty:
             top = daily.head(15).copy()
             top = top.set_index("Date")[["Matched", "Not Matched", "Duplicate Match"]]
-            st.bar_chart(top, use_container_width=True, height=280)
+            st.bar_chart(top, width="stretch", height=280)
         else:
             st.info("No valid dates found in Cashfree data.")
 
@@ -821,7 +821,7 @@ def render_dashboard(output_df: pd.DataFrame, erp_count: int, cf_count: int) -> 
             "Date", key=lambda s: pd.to_datetime(s, format="%d-%m-%Y")
         )
         trend = trend.set_index("Date")[["Match Rate (%)"]]
-        st.line_chart(trend, use_container_width=True, height=260)
+        st.line_chart(trend, width="stretch", height=260)
 
     # ---------- Amount flow by date ----------
     if not daily.empty:
@@ -829,7 +829,7 @@ def render_dashboard(output_df: pd.DataFrame, erp_count: int, cf_count: int) -> 
         flow = daily.sort_values(
             "Date", key=lambda s: pd.to_datetime(s, format="%d-%m-%Y")
         ).set_index("Date")[["Total Amount", "Matched Amount"]]
-        st.area_chart(flow, use_container_width=True, height=260)
+        st.area_chart(flow, width="stretch", height=260)
 
 
 def render_datewise_tab(output_df: pd.DataFrame) -> None:
@@ -878,7 +878,7 @@ def render_datewise_tab(output_df: pd.DataFrame) -> None:
         with k4: render_metric("Amount (Matched)", f"₹{daily_f['Matched Amount'].sum():,.2f}")
 
     # ---- Table ----
-    st.dataframe(daily_f, use_container_width=True, height=420, hide_index=True)
+    st.dataframe(daily_f, width="stretch", height=420, hide_index=True)
 
     # ---- Download of the date-wise table ----
     csv_bytes = daily_f.to_csv(index=False).encode("utf-8")
@@ -904,7 +904,7 @@ def render_datewise_tab(output_df: pd.DataFrame) -> None:
         )
         day_df = output_df[mask]
         st.caption(f"{len(day_df):,} transaction(s) on **{picked}**")
-        st.dataframe(day_df, use_container_width=True, height=420, hide_index=True)
+        st.dataframe(day_df, width="stretch", height=420, hide_index=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -1022,7 +1022,7 @@ def main() -> None:
             key="status_filter_widget",
         )
         view = output_df[output_df["Status"].isin(status_filter)] if status_filter else output_df
-        st.dataframe(view, use_container_width=True, height=520, hide_index=True)
+        st.dataframe(view, width="stretch", height=520, hide_index=True)
 
     with tab_download:
         st.markdown("### ⬇️ Downloads")
@@ -1043,7 +1043,7 @@ def main() -> None:
                 data=xlsx_bytes,
                 file_name=f"erp_cashfree_reconciliation_{ts}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+                width="stretch",
                 key="dl_xlsx",
             )
         with d2:
@@ -1052,7 +1052,7 @@ def main() -> None:
                 data=csv_bytes,
                 file_name=f"erp_cashfree_reconciliation_{ts}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
                 key="dl_csv",
             )
         if daily_csv:
@@ -1063,7 +1063,7 @@ def main() -> None:
                     data=daily_csv,
                     file_name=f"datewise_{ts}.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                     key="dl_daily_csv",
                 )
 

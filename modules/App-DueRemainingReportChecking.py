@@ -1181,7 +1181,7 @@ with col1:
                     st.info(f"   - '{status}': {count} records")
             
             with st.expander("Preview Scheme Report (First 5 rows)"):
-                st.dataframe(scheme_df.head(5), use_container_width=True)
+                st.dataframe(scheme_df.head(5), width="stretch")
 
 with col2:
     st.markdown("**Saving Scheme Receipt Register**")
@@ -1193,7 +1193,7 @@ with col2:
             st.session_state.receipt_df = receipt_df
             st.success(f"✅ Loaded {len(receipt_df)} records")
             with st.expander("Preview Receipt Register (First 5 rows)"):
-                st.dataframe(receipt_df.head(5), use_container_width=True)
+                st.dataframe(receipt_df.head(5), width="stretch")
 
 # Process files when both are uploaded
 if scheme_file and receipt_file:
@@ -1267,7 +1267,7 @@ if scheme_file and receipt_file:
             st.info(f"   - '{status}': {count}")
     
     with col3:
-        if st.button("🚀 Process Matches", type="primary", use_container_width=True):
+        if st.button("🚀 Process Matches", type="primary", width="stretch"):
             if len(scheme_df) == 0:
                 st.warning("⚠️ No scheme records found!")
                 st.stop()
@@ -1519,7 +1519,7 @@ if st.session_state.processed and len(st.session_state.final_df) > 0:
             data=email_content,
             file_name=f"scheme_payment_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
             mime="text/plain",
-            use_container_width=True
+            width="stretch"
         )
         
         st.markdown("---")
@@ -1565,7 +1565,7 @@ if st.session_state.processed and len(st.session_state.final_df) > 0:
             
             st.dataframe(
                 display_pivot.style.apply(highlight_grand_total, axis=1),
-                use_container_width=True,
+                width="stretch",
                 height=400
             )
             
@@ -1576,7 +1576,7 @@ if st.session_state.processed and len(st.session_state.final_df) > 0:
                 data=pivot_csv,
                 file_name=f"pivot_table_all_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
-                use_container_width=True
+                width="stretch"
             )
             
             # Visualize pivot data
@@ -1663,7 +1663,7 @@ if st.session_state.processed and len(st.session_state.final_df) > 0:
             
             st.dataframe(
                 display_pivot_skipped.style.apply(highlight_grand_total, axis=1),
-                use_container_width=True,
+                width="stretch",
                 height=400
             )
             
@@ -1674,7 +1674,7 @@ if st.session_state.processed and len(st.session_state.final_df) > 0:
                 data=pivot_skipped_csv,
                 file_name=f"pivot_table_skipped_only_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
-                use_container_width=True
+                width="stretch"
             )
             
             # Visualize pivot data
@@ -1704,7 +1704,7 @@ if st.session_state.processed and len(st.session_state.final_df) > 0:
     st.info("💡 **New Columns**: Customer Paid Date | Payment Status | Same Day | After Paid | Before Paid | Note Paid | Cash | Online | Card Amt | Cheque Amt | Neft Amt | Rtgs Amt | Vou Ref Amt | Amount Received")
     
     # Show dataframe
-    st.dataframe(st.session_state.final_df, use_container_width=True, height=500)
+    st.dataframe(st.session_state.final_df, width="stretch", height=500)
     
     # Download options
     st.subheader("💾 Download Options")
@@ -1719,7 +1719,7 @@ if st.session_state.processed and len(st.session_state.final_df) > 0:
             data=csv,
             file_name=f"scheme_payment_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
-            use_container_width=True
+            width="stretch"
         )
     
     with col2:
@@ -1790,7 +1790,7 @@ if st.session_state.processed and len(st.session_state.final_df) > 0:
             data=excel_data,
             file_name=f"scheme_payment_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            width="stretch"
         )
         
         st.success("✅ Excel report generated with proper headings for all sheets!")
@@ -1821,7 +1821,7 @@ if st.session_state.processed and len(st.session_state.final_df) > 0:
         
         if filter_type != "All":
             st.info(f"Showing {len(filtered_df)} records")
-            st.dataframe(filtered_df, use_container_width=True, height=300)
+            st.dataframe(filtered_df, width="stretch", height=300)
     
     # Search functionality
     st.subheader("🔎 Search Records")
@@ -1832,7 +1832,7 @@ if st.session_state.processed and len(st.session_state.final_df) > 0:
             st.session_state.final_df['Customer'].astype(str).str.contains(search_term, case=False, na=False)
         ]
         if len(search_result) > 0:
-            st.dataframe(search_result, use_container_width=True)
+            st.dataframe(search_result, width="stretch")
         else:
             st.warning("No records found")
 

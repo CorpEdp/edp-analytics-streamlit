@@ -1666,7 +1666,7 @@ def render_dashboard(display_report):
             fig = px.line(daily, x='Updated Date', y='Customers', markers=True,
                           title=None, labels={'Updated Date': 'Date', 'Customers': 'Customers'})
             fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No dated records to chart.")
 
@@ -1677,7 +1677,7 @@ def render_dashboard(display_report):
             cat_counts.columns = ['Category', 'Count']
             fig = px.pie(cat_counts, names='Category', values='Count', hole=0.45)
             fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No category data available.")
 
@@ -1690,7 +1690,7 @@ def render_dashboard(display_report):
             branch_counts.columns = ['Branch', 'Customers']
             fig = px.bar(branch_counts, x='Customers', y='Branch', orientation='h')
             fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360, yaxis={'categoryorder': 'total ascending'})
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No branch data available.")
 
@@ -1700,7 +1700,7 @@ def render_dashboard(display_report):
             top_emp = non_dup.groupby('Employee Name')['Customer Enrollment Amount'].sum().sort_values(ascending=False).head(10).reset_index()
             fig = px.bar(top_emp, x='Customer Enrollment Amount', y='Employee Name', orientation='h')
             fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360, yaxis={'categoryorder': 'total ascending'})
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.info("No employee data available.")
 
@@ -2263,13 +2263,13 @@ def main():
                     fig = px.bar(top_branches, x='Branch', y='Total Customers')
                     fig.update_xaxes(categoryorder='array', categoryarray=top_branches['Branch'].tolist())
                     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                 with col2:
                     st.markdown("#### Enrollment Rate by Branch")
                     fig = px.bar(top_branches, x='Branch', y='Enrollment Rate (%)')
                     fig.update_xaxes(categoryorder='array', categoryarray=top_branches['Branch'].tolist())
                     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
                 st.markdown("#### 💾 Download This Report")
                 csv_buffer = io.StringIO()

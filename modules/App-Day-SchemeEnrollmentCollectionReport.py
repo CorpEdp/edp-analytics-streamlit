@@ -1684,7 +1684,7 @@ def display_avg_ticket_comparison(avg_ticket_df):
         display_df["% Change"] = display_df["% Change"].apply(
             lambda x: f"{x * 100:.2f}%" if isinstance(x, (int, float)) else x
         )
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df, width="stretch", hide_index=True)
 
 
 # ============================================================
@@ -2186,14 +2186,14 @@ if referral_files_present and referral_debug:
                     {"Reason": k, "Count": v}
                     for k, v in referral_debug['not_enrolled_breakdown'].items()
                 ]),
-                use_container_width=True, hide_index=True
+                width="stretch", hide_index=True
             )
 
     with st.expander("🔍 Branch × Category Pivot (in-scope)"):
         if not referral_detail.empty:
             grp = referral_detail.groupby(['Branch', 'Category']).size().reset_index(name='Count')
             pivot_dbg = grp.pivot(index='Branch', columns='Category', values='Count').fillna(0).astype(int)
-            st.dataframe(pivot_dbg, use_container_width=True)
+            st.dataframe(pivot_dbg, width="stretch")
 
 
 # ============================================================
@@ -2204,7 +2204,7 @@ st.header("📋 Formatted Report Preview")
 
 if daily_schemes and not daily_summary.empty:
     st.subheader("📅 Daily Schemes (e-Gold & e-Silver)")
-    st.dataframe(daily_summary, use_container_width=True, hide_index=True)
+    st.dataframe(daily_summary, width="stretch", hide_index=True)
     if not daily_avg_ticket.empty:
         display_avg_ticket_comparison(daily_avg_ticket)
     if not daily_enrollment_projection.empty or not daily_collection_projection.empty:
@@ -2212,20 +2212,20 @@ if daily_schemes and not daily_summary.empty:
         c5, c6 = st.columns(2)
         with c5:
             st.caption("Projection — first enrollments")
-            st.dataframe(daily_enrollment_projection, use_container_width=True, hide_index=True)
+            st.dataframe(daily_enrollment_projection, width="stretch", hide_index=True)
         with c6:
             st.caption("Projection — overall collection")
-            st.dataframe(daily_collection_projection, use_container_width=True, hide_index=True)
+            st.dataframe(daily_collection_projection, width="stretch", hide_index=True)
     c1, c2 = st.columns(2)
     with c1:
-        st.dataframe(daily_enrollment, use_container_width=True, hide_index=True)
+        st.dataframe(daily_enrollment, width="stretch", hide_index=True)
     with c2:
-        st.dataframe(daily_collection, use_container_width=True, hide_index=True)
-    st.dataframe(daily_unique, use_container_width=True, hide_index=True)
+        st.dataframe(daily_collection, width="stretch", hide_index=True)
+    st.dataframe(daily_unique, width="stretch", hide_index=True)
 
 if sessional_schemes and not sessional_summary.empty:
     st.subheader("🎯 Sessional Schemes")
-    st.dataframe(sessional_summary, use_container_width=True, hide_index=True)
+    st.dataframe(sessional_summary, width="stretch", hide_index=True)
     if not sessional_avg_ticket.empty:
         display_avg_ticket_comparison(sessional_avg_ticket)
     if not sessional_enrollment_projection.empty or not sessional_collection_projection.empty:
@@ -2233,16 +2233,16 @@ if sessional_schemes and not sessional_summary.empty:
         c5, c6 = st.columns(2)
         with c5:
             st.caption("Projection — first enrollments")
-            st.dataframe(sessional_enrollment_projection, use_container_width=True, hide_index=True)
+            st.dataframe(sessional_enrollment_projection, width="stretch", hide_index=True)
         with c6:
             st.caption("Projection — overall collection")
-            st.dataframe(sessional_collection_projection, use_container_width=True, hide_index=True)
+            st.dataframe(sessional_collection_projection, width="stretch", hide_index=True)
     c1, c2 = st.columns(2)
     with c1:
-        st.dataframe(sessional_enrollment, use_container_width=True, hide_index=True)
+        st.dataframe(sessional_enrollment, width="stretch", hide_index=True)
     with c2:
-        st.dataframe(sessional_collection, use_container_width=True, hide_index=True)
-    st.dataframe(sessional_unique, use_container_width=True, hide_index=True)
+        st.dataframe(sessional_collection, width="stretch", hide_index=True)
+    st.dataframe(sessional_unique, width="stretch", hide_index=True)
 
 
 # ============================================================
@@ -2263,7 +2263,7 @@ if referral_files_present:
             display_summary[col] = display_summary[col].apply(
                 lambda x: "-" if (isinstance(x, (int, float)) and x == 0) else x
             )
-        st.dataframe(display_summary, use_container_width=True, hide_index=True)
+        st.dataframe(display_summary, width="stretch", hide_index=True)
 
         if referral_daily_list:
             st.subheader("📅 Daily Referral Breakdown")
@@ -2274,7 +2274,7 @@ if referral_files_present:
                     day_display[col] = day_display[col].apply(
                         lambda x: "-" if (isinstance(x, (int, float)) and x == 0) else x
                     )
-                st.dataframe(day_display, use_container_width=True, hide_index=True)
+                st.dataframe(day_display, width="stretch", hide_index=True)
 
         st.markdown("---")
         st.subheader("📋 Referral Match Details — All Rows")
@@ -2364,10 +2364,10 @@ if referral_files_present:
 
         if len(dd_display) <= 5000:
             styled_dd = dd_display.style.apply(highlight_rows, axis=1)
-            st.dataframe(styled_dd, use_container_width=True, height=600)
+            st.dataframe(styled_dd, width="stretch", height=600)
         else:
             st.info(f"ℹ️ Showing {len(dd_display):,} rows without highlighting for performance")
-            st.dataframe(dd_display, use_container_width=True, height=600)
+            st.dataframe(dd_display, width="stretch", height=600)
 
         csv_buffer = io.StringIO()
         dd_display.to_csv(csv_buffer, index=False)
@@ -2376,7 +2376,7 @@ if referral_files_present:
             data=csv_buffer.getvalue(),
             file_name=f"referral_match_details_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv",
             mime="text/csv",
-            use_container_width=True
+            width="stretch"
         )
 
         if not_enrolled_rows > 0:
@@ -2393,11 +2393,11 @@ if referral_files_present:
                     'Referrer Name', 'Employee Code'
                 ]
                 ne_cols = [c for c in ne_cols if c in ne_df.columns]
-                st.dataframe(ne_df[ne_cols], use_container_width=True, height=500)
+                st.dataframe(ne_df[ne_cols], width="stretch", height=500)
 
         if not referral_duplicates.empty:
             with st.expander("🔴 View Duplicate Records"):
-                st.dataframe(referral_duplicates, use_container_width=True, hide_index=True)
+                st.dataframe(referral_duplicates, width="stretch", hide_index=True)
 else:
     st.info("💡 Upload Employee + Referral files to see the Referral Report.")
 
@@ -2479,7 +2479,7 @@ try:
         data=excel_data,
         file_name=f"{clean_filename}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
+        width="stretch"
     )
 except Exception as e:
     st.error(f"❌ Could not build the Excel report: {e}")

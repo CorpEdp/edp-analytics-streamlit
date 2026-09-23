@@ -710,7 +710,7 @@ def create_visualizations(comparison_data, config):
             hole=0.4
         )
         fig.update_traces(textposition='inside', textinfo='percent+label')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     
     with col2:
         # Mismatch category distribution (only for mismatches)
@@ -726,7 +726,7 @@ def create_visualizations(comparison_data, config):
                 color_continuous_scale='Reds'
             )
             fig.update_layout(showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     
     # Second row - additional metrics
     col3, col4 = st.columns(2)
@@ -743,7 +743,7 @@ def create_visualizations(comparison_data, config):
                 color_discrete_sequence=['#3B82F6']
             )
             fig.update_layout(bargap=0.1)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     
     with col4:
         # Amount difference distribution
@@ -756,7 +756,7 @@ def create_visualizations(comparison_data, config):
                     labels={'value': 'Amount Difference (₹)'},
                     color_discrete_sequence=['#8B5CF6']
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
 # ============================================================================
 # REPORT GENERATION FUNCTIONS
@@ -1054,13 +1054,13 @@ def display_results(comparison, missing_trans, extra_trans, participation_df, co
                 return ''
             
             styled_df = display_data_formatted[preview_cols].style.applymap(color_result, subset=['Final Result'])
-            st.dataframe(styled_df, use_container_width=True, height=400)
+            st.dataframe(styled_df, width="stretch", height=400)
         else:
             # Show without styling for large datasets
-            st.dataframe(display_data_formatted[preview_cols], use_container_width=True, height=400)
+            st.dataframe(display_data_formatted[preview_cols], width="stretch", height=400)
     except Exception as e:
         # Fallback to unstyled view
-        st.dataframe(display_data_formatted[preview_cols], use_container_width=True, height=400)
+        st.dataframe(display_data_formatted[preview_cols], width="stretch", height=400)
     
     return {
         'total_participation': total_participation,
@@ -1130,7 +1130,7 @@ def display_mismatch_details(comparison):
                     st.subheader("Mismatch Category Summary")
                     category_summary = mismatched_df['Mismatch Category'].value_counts().reset_index()
                     category_summary.columns = ['Category', 'Count']
-                    st.dataframe(category_summary, use_container_width=True)
+                    st.dataframe(category_summary, width="stretch")
                 
                 with tab2:
                     # Show sample of records (first 100) with formatted dates
@@ -1143,7 +1143,7 @@ def display_mismatch_details(comparison):
                     # Display without styling to avoid limit issues
                     st.dataframe(
                         mismatched_sample,
-                        use_container_width=True,
+                        width="stretch",
                         height=400
                     )
                     
@@ -1167,13 +1167,13 @@ def display_mismatch_details(comparison):
                             color_continuous_scale='Reds'
                         )
                         fig.update_layout(showlegend=False)
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                     
                     with col2:
                         # Show as table
                         category_df = category_counts.reset_index()
                         category_df.columns = ['Category', 'Count']
-                        st.dataframe(category_df, use_container_width=True)
+                        st.dataframe(category_df, width="stretch")
 
 def create_download_section(comparison, missing_trans, extra_trans):
     """Create download buttons for reports"""
@@ -1191,7 +1191,7 @@ def create_download_section(comparison, missing_trans, extra_trans):
             data=excel_data,
             file_name=f"Scheme_Verification_Report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            width="stretch"
         )
     
     with col2:
@@ -1203,7 +1203,7 @@ def create_download_section(comparison, missing_trans, extra_trans):
             data=csv_data,
             file_name=f"Scheme_Verification_Report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
-            use_container_width=True
+            width="stretch"
         )
     
     with col3:
@@ -1217,7 +1217,7 @@ def create_download_section(comparison, missing_trans, extra_trans):
                 data=csv_mismatch,
                 file_name=f"Mismatched_Records_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
-                use_container_width=True
+                width="stretch"
             )
 
 # ============================================================================

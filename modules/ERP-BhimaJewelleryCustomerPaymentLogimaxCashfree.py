@@ -452,7 +452,7 @@ with st.sidebar:
     # Add option to show debug info
     show_debug = st.checkbox("🔧 Show Debug Info", value=False)
     
-    if st.button("🔄 Load Data", use_container_width=True):
+    if st.button("🔄 Load Data", width="stretch"):
         st.cache_data.clear()
         st.rerun()
     
@@ -513,7 +513,7 @@ with st.expander("📋 Excel File Column Structure", expanded=False):
                 "Column Name": info['Columns']
             }
             col_df = pd.DataFrame(col_data)
-            st.dataframe(col_df, use_container_width=True, height=min(300, len(info['Columns']) * 35 + 40))
+            st.dataframe(col_df, width="stretch", height=min(300, len(info['Columns']) * 35 + 40))
     else:
         st.info("No files loaded yet. Click 'Load Data' to see column structure.")
 
@@ -843,7 +843,7 @@ if dist_data:
     # Style the dataframe
     st.dataframe(
         dist_df,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "Report Type": st.column_config.TextColumn("Report Type", width="medium"),
             "Records": st.column_config.NumberColumn("Records", width="small"),
@@ -979,7 +979,7 @@ with col1:
         "📊 Excel (Multi-Sheet)",
         excel_data,
         file_name=f"{base_filename}.xlsx",
-        use_container_width=True,
+        width="stretch",
         help="Excel with Logimax first, then Cashfree sheets + Summary"
     )
     st.caption("📌 Sheets: Logimax → Cashfree → Summary")
@@ -996,7 +996,7 @@ with col2:
             csv_data_dict[selected_report],
             file_name=f"{base_filename}_{selected_report}.csv",
             mime="text/csv",
-            use_container_width=True
+            width="stretch"
         )
     elif len(csv_data_dict) == 1:
         st.download_button(
@@ -1004,7 +1004,7 @@ with col2:
             list(csv_data_dict.values())[0],
             file_name=f"{base_filename}.csv",
             mime="text/csv",
-            use_container_width=True
+            width="stretch"
         )
     else:
         st.warning("No data to export as CSV")
@@ -1031,7 +1031,7 @@ with col3:
             json_data,
             file_name=f"{base_filename}.json",
             mime="application/json",
-            use_container_width=True
+            width="stretch"
         )
 
 st.caption("📌 Note: Exported files do not include internal columns (Branch, Source_File, Date, Month)")
@@ -1073,28 +1073,28 @@ if len(tabs) > 1:
                     display_df = pd.concat([display_df, cf], ignore_index=True)
                 if not display_df.empty:
                     display_df.insert(0, "S.No", range(1, len(display_df)+1))
-                    st.dataframe(display_df, use_container_width=True, height=400)
+                    st.dataframe(display_df, width="stretch", height=400)
                     st.caption(f"📌 Total: {len(display_df)} records")
             elif tab_name == "📦 Logimax":
                 display_df = filtered_logimax.copy()
                 display_df.insert(0, "S.No", range(1, len(display_df)+1))
-                st.dataframe(display_df, use_container_width=True, height=400)
+                st.dataframe(display_df, width="stretch", height=400)
                 st.caption(f"📌 {len(display_df)} records for Logimax")
             elif tab_name == "💳 Cashfree":
                 display_df = filtered_cashfree.copy()
                 display_df.insert(0, "S.No", range(1, len(display_df)+1))
-                st.dataframe(display_df, use_container_width=True, height=400)
+                st.dataframe(display_df, width="stretch", height=400)
                 st.caption(f"📌 {len(display_df)} records for Cashfree")
 else:
     # Only one report type
     if not filtered_logimax.empty:
         display_df = filtered_logimax.copy()
         display_df.insert(0, "S.No", range(1, len(display_df)+1))
-        st.dataframe(display_df, use_container_width=True, height=400)
+        st.dataframe(display_df, width="stretch", height=400)
     elif not filtered_cashfree.empty:
         display_df = filtered_cashfree.copy()
         display_df.insert(0, "S.No", range(1, len(display_df)+1))
-        st.dataframe(display_df, use_container_width=True, height=400)
+        st.dataframe(display_df, width="stretch", height=400)
 
 # =====================================================
 # CUSTOMER DIRECTORY
@@ -1143,7 +1143,7 @@ if not filtered_cashfree.empty:
 if customer_data:
     customers_df = pd.DataFrame(customer_data)
     customers_df = customers_df.drop_duplicates(subset=["Customer Name", "Phone"])
-    st.dataframe(customers_df, use_container_width=True, height=300)
+    st.dataframe(customers_df, width="stretch", height=300)
     st.caption(f"📌 Total unique customers: {len(customers_df)}")
 
 # =====================================================

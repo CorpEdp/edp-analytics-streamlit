@@ -717,7 +717,7 @@ with col1:
 with col2:
     st.dataframe(
         segment_counts,
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
@@ -773,7 +773,7 @@ for segment in sorted(filtered_customers['Segment_Name'].unique()):
             
             st.dataframe(
                 display_data,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
             
@@ -837,7 +837,7 @@ if display_cols:
     
     st.dataframe(
         transaction_view,
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 

@@ -2281,7 +2281,7 @@ if uploaded_file is not None:
                 )
                 st.metric("Blank Branches", blank_count)
 
-        st.dataframe(df.head(10), use_container_width=True)
+        st.dataframe(df.head(10), width="stretch")
 
         with st.expander("📋 All Columns in Your File"):
             st.write(df.columns.tolist())
@@ -2456,7 +2456,7 @@ if uploaded_file is not None:
         if st.button(
             "🚀 Generate Branch-wise Report",
             type="primary",
-            use_container_width=True
+            width="stretch"
         ):
 
             with st.spinner("Analyzing and generating reports..."):
@@ -2509,21 +2509,21 @@ if uploaded_file is not None:
             # =================================================
 
             st.subheader("🔍 Sample Detection Results")
-            st.dataframe(results["sample_data"], use_container_width=True)
+            st.dataframe(results["sample_data"], width="stretch")
 
             # =================================================
             # DETECTION STATS
             # =================================================
 
             st.subheader("📊 Detection Statistics")
-            st.dataframe(results["stats_df"], use_container_width=True)
+            st.dataframe(results["stats_df"], width="stretch")
 
             # =================================================
             # BRANCH MAPPING
             # =================================================
 
             st.subheader("🏢 Branch Code Mapping Results")
-            st.dataframe(results["branch_mapping"], use_container_width=True)
+            st.dataframe(results["branch_mapping"], width="stretch")
 
             # =================================================
             # UNKNOWN
@@ -2563,7 +2563,7 @@ if uploaded_file is not None:
 
             st.dataframe(
                 report_display.style.format(format_dict),
-                use_container_width=True
+                width="stretch"
             )
 
             # =================================================
@@ -2583,7 +2583,7 @@ if uploaded_file is not None:
                 ),
                 mime="text/csv",
                 key="download_csv_btn",
-                use_container_width=True
+                width="stretch"
             )
 
             # =================================================
@@ -2657,13 +2657,13 @@ if uploaded_file is not None:
                 with day_tab1:
                     st.dataframe(
                         results["day_wise"].style.format("₹{:,.2f}"),
-                        use_container_width=True
+                        width="stretch"
                     )
 
                 with day_tab2:
                     st.dataframe(
                         results["day_wise_weight"].style.format("{:,.3f}"),
-                        use_container_width=True
+                        width="stretch"
                     )
 
             else:
@@ -2702,7 +2702,7 @@ if uploaded_file is not None:
                     "spreadsheetml.sheet"
                 ),
                 type="primary",
-                use_container_width=True,
+                width="stretch",
                 key="download_report_btn"
             )
 

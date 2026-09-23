@@ -309,7 +309,7 @@ if external_file and internal_file:
 
     st.dataframe(
         filtered_df,
-        use_container_width=True,
+        width="stretch",
         height=500
     )
 
@@ -356,7 +356,7 @@ if external_file and internal_file:
             "📊 Download Excel Report",
             data=output.getvalue(),
             file_name="reconciliation_report.xlsx",
-            use_container_width=True
+            width="stretch"
         )
 
     with col_export2:
@@ -366,7 +366,7 @@ if external_file and internal_file:
             data=filtered_df.to_csv(index=False).encode('utf-8'),
             file_name="reconciliation_results.csv",
             mime="text/csv",
-            use_container_width=True
+            width="stretch"
         )
 
     # ========================================================

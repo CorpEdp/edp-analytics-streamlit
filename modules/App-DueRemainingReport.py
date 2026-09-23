@@ -811,7 +811,7 @@ if joining_file and payment_file:
                         "Passbook", "Customer", "Mobile No", "Scheme", "Status"
                     ]].copy()
                     unmatched_display["S.No"] = range(1, len(unmatched_display) + 1)
-                    st.dataframe(unmatched_display, use_container_width=True)
+                    st.dataframe(unmatched_display, width="stretch")
             
             # Summary statistics
             if show_summary:
@@ -951,11 +951,11 @@ if joining_file and payment_file:
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.plotly_chart(fig1, use_container_width=True)
+                    st.plotly_chart(fig1, width="stretch")
                 with col2:
-                    st.plotly_chart(fig2, use_container_width=True)
+                    st.plotly_chart(fig2, width="stretch")
                 
-                st.plotly_chart(fig3, use_container_width=True)
+                st.plotly_chart(fig3, width="stretch")
             
             # Data table with pagination
             st.divider()
@@ -1018,7 +1018,7 @@ if joining_file and payment_file:
             
             st.dataframe(
                 styled_df,
-                use_container_width=True,
+                width="stretch",
                 height=400
             )
             
@@ -1036,7 +1036,7 @@ if joining_file and payment_file:
                         excel_data,
                         file_name=f"Scheme_Due_Report_{datetime.now().strftime('%Y%m%d')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
+                        width="stretch"
                     )
                 else:
                     csv_data = filtered_report.to_csv(index=False).encode('utf-8')
@@ -1045,7 +1045,7 @@ if joining_file and payment_file:
                         csv_data,
                         file_name=f"Scheme_Due_Report_{datetime.now().strftime('%Y%m%d')}.csv",
                         mime="text/csv",
-                        use_container_width=True
+                        width="stretch"
                     )
             
             with col2:
@@ -1058,7 +1058,7 @@ if joining_file and payment_file:
                             excel_data,
                             file_name=f"Scheme_Due_Report_All_{datetime.now().strftime('%Y%m%d')}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
+                            width="stretch"
                         )
                     else:
                         csv_data = report.to_csv(index=False).encode('utf-8')
@@ -1067,7 +1067,7 @@ if joining_file and payment_file:
                             csv_data,
                             file_name=f"Scheme_Due_Report_All_{datetime.now().strftime('%Y%m%d')}.csv",
                             mime="text/csv",
-                            use_container_width=True
+                            width="stretch"
                         )
             
             with col3:
@@ -1077,7 +1077,7 @@ if joining_file and payment_file:
                 ].sort_values("Skipped_Months", ascending=False)
                 
                 if len(overdue_report) > 0:
-                    if st.button("📋 Export Overdue Summary", use_container_width=True):
+                    if st.button("📋 Export Overdue Summary", width="stretch"):
                         excel_data = create_excel(overdue_report)
                         st.download_button(
                             "📊 Download Overdue Summary",

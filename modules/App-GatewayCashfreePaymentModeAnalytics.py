@@ -154,7 +154,7 @@ if uploaded_file:
         st.success("✅ File Uploaded Successfully")
 
         st.subheader("Raw Data Preview")
-        st.dataframe(df.head(), use_container_width=True)
+        st.dataframe(df.head(), width="stretch")
 
         # -----------------------------
         # Check if dataframe is empty
@@ -268,7 +268,7 @@ if uploaded_file:
             Sample_Values=('Payment Mode SubType', lambda x: list(x.head(3)))
         ).reset_index()
         
-        st.dataframe(classification_check, use_container_width=True)
+        st.dataframe(classification_check, width="stretch")
 
         # -----------------------------
         # Unique SubType Summary
@@ -466,19 +466,19 @@ if uploaded_file:
         st.subheader("📋 Payment Mode SubType Summary")
         st.dataframe(
             unique_subtypes,
-            use_container_width=True
+            width="stretch"
         )
 
         st.subheader("📅 Month Wise Payment Mode SubType")
         st.dataframe(
             subtype_summary,
-            use_container_width=True
+            width="stretch"
         )
 
         st.subheader("📊 Month Wise Parent SubType")
         st.dataframe(
             parent_summary,
-            use_container_width=True
+            width="stretch"
         )
 
         # -----------------------------
@@ -500,7 +500,7 @@ if uploaded_file:
                     # Display the table
                     st.dataframe(
                         month_info['table'],
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
         
@@ -512,13 +512,13 @@ if uploaded_file:
                 'Service_Charge', 'ST_GST', 'Settlement_Amount',
                 'Avg_Service_Charge', 'Service_Charge_Percentage'
             ]],
-            use_container_width=True
+            width="stretch"
         )
 
         st.subheader("💰 Grand Total")
         st.dataframe(
             grand_total,
-            use_container_width=True
+            width="stretch"
         )
 
         # -----------------------------

@@ -2385,7 +2385,7 @@ def render_scheme_master_editor(master: Dict[str, Tuple[str, str]]) -> None:
 
         edited_df = st.data_editor(
             master_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "Scheme": st.column_config.TextColumn(required=True, width="large"),
@@ -2493,7 +2493,7 @@ def render_validation_panel(issues: List[ValidationIssue]) -> None:
         ]
     )
 
-    st.dataframe(issues_df, use_container_width=True, hide_index=True)
+    st.dataframe(issues_df, width="stretch", hide_index=True)
 
     st.download_button(
         "⬇️ Download Validation Issues (CSV)",
@@ -2744,7 +2744,7 @@ def render_branch_mapping_viewer(mapping: Dict[str, str]) -> None:
             [{"Code": code, "Branch Name": branch} for code, branch in mapping.items()]
         ).sort_values("Code")
 
-        st.dataframe(mapping_df, use_container_width=True, hide_index=True)
+        st.dataframe(mapping_df, width="stretch", hide_index=True)
 
         st.download_button(
             "⬇️ Download Branch Mapping (CSV)",
@@ -2776,7 +2776,7 @@ def render_scheme_mapping_viewer(df: pd.DataFrame) -> None:
             .reset_index(drop=True)
         )
 
-        st.dataframe(scheme_df, use_container_width=True, hide_index=True)
+        st.dataframe(scheme_df, width="stretch", hide_index=True)
 
 
 # ============================================================
@@ -2993,19 +2993,19 @@ The application will **NOT continue** until the source data or Scheme Master is 
 
     st.subheader("📅 Daily & Cumulative")
 
-    st.dataframe(cumulative, use_container_width=True, hide_index=True)
+    st.dataframe(cumulative, width="stretch", hide_index=True)
 
     # STEP 21 — BRANCH SUMMARY
     st.subheader("🏢 Branch Summary")
 
-    st.dataframe(branch_summary, use_container_width=True, hide_index=True)
+    st.dataframe(branch_summary, width="stretch", hide_index=True)
 
     # STEP 22 — JOINING REGISTER
     register_df = build_register_df(filtered_df, cols)
 
     st.subheader("📋 Joining Register")
 
-    st.dataframe(register_df, use_container_width=True, hide_index=True)
+    st.dataframe(register_df, width="stretch", hide_index=True)
 
     # STEP 23 — EXCEL EXPORT
     excel_data = build_scheme_joining_excel(
@@ -3038,7 +3038,7 @@ The application will **NOT continue** until the source data or Scheme Master is 
         data=excel_data,
         file_name=report_file_name,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
+        width="stretch",
     )
 
     st.caption(f"📄 File will be saved as: `{report_file_name}`")
