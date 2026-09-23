@@ -2224,7 +2224,7 @@ if daily_schemes and not daily_summary.empty:
     st.dataframe(daily_unique, width="stretch", hide_index=True)
 
 if sessional_schemes and not sessional_summary.empty:
-    st.subheader("🎯 Sessional Schemes")
+    st.subheader("🎯 Seasonal Schemes")
     st.dataframe(sessional_summary, width="stretch", hide_index=True)
     if not sessional_avg_ticket.empty:
         display_avg_ticket_comparison(sessional_avg_ticket)
@@ -2453,8 +2453,8 @@ sessional_data = {
     "unique": sessional_unique if sessional_unique is not None and not sessional_unique.empty else pd.DataFrame(),
     "schemes": sessional_schemes,
     "date_range": (start_date.strftime("%d-%m-%Y"), end_date.strftime("%d-%m-%Y")),
-    "report_title": "Sessional Scheme Enrollment & Collection Report",
-    "sheet_name": "Sessional Scheme",
+    "report_title": "Seasonal Scheme Enrollment & Collection Report",
+    "sheet_name": "Seasonal Scheme",
     "enrollment_projection": sessional_enrollment_projection,
     "collection_projection": sessional_collection_projection,
     "projection_month_label": sessional_projection_label,
