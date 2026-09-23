@@ -323,6 +323,32 @@ def clean_text(series):
     return (series.astype(str).str.strip().replace(["nan", "None", "NaN", ""], np.nan))
 
 
+def find_duplicate_transaction_references(df):
+    """Return duplicate non-blank transaction references with source row details."""
+    if "Transaction Reference" not in df.columns:
+        return pd.DataFrame(columns=["Transaction Reference", "Occurrences", "Source Rows"])
+
+    references = df["Transaction Reference"].astype("string").str.strip()
+    source_rows = pd.Series(range(2, len(df) + 2), index=df.index)
+    valid = references.notna() & references.ne("")
+    duplicate_mask = valid & references.duplicated(keep=False)
+    if not duplicate_mask.any():
+        return pd.DataFrame(columns=["Transaction Reference", "Occurrences", "Source Rows"])
+
+    duplicate_rows = pd.DataFrame({
+        "Transaction Reference": references[duplicate_mask],
+        "Source Row": source_rows[duplicate_mask],
+    })
+    return (
+        duplicate_rows.groupby("Transaction Reference", sort=False)
+        .agg(
+            Occurrences=("Source Row", "size"),
+            **{"Source Rows": ("Source Row", lambda rows: ", ".join(map(str, rows)))},
+        )
+        .reset_index()
+    )
+
+
 def round_value(value):
     if pd.isna(value):
         return 0
@@ -1729,6 +1755,15 @@ missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
 if missing_columns:
     st.error("❌ Required columns are missing.")
     st.write("Missing columns:", missing_columns)
+    st.stop()
+
+duplicate_references = find_duplicate_transaction_references(df)
+if not duplicate_references.empty:
+    st.error(
+        "❌ Duplicate Transaction Reference values were detected in the Main Transaction File. "
+        "Please correct the source file before generating the report."
+    )
+    st.dataframe(duplicate_references, width="stretch", hide_index=True)
     st.stop()
 
 df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
