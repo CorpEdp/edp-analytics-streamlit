@@ -971,12 +971,16 @@ if process_button:
         # Remove invalid phones (less than 10 digits after normalization)
         valid_phone_int = internal_matched[phone_col_int].str.len() == 10
         valid_phone_camp = camp_df_clean[phone_col_camp].str.len() == 10
+        internal_count = len(internal_matched)
+        campaign_count = len(camp_df_clean)
+        internal_valid_pct = valid_phone_int.sum() / internal_count * 100 if internal_count else 0
+        campaign_valid_pct = valid_phone_camp.sum() / campaign_count * 100 if campaign_count else 0
         
         internal_matched_clean = internal_matched[valid_phone_int].copy()
         camp_df_clean = camp_df_clean[valid_phone_camp].copy()
         
         # Display phone normalization statistics
-        st.info(f"📱 Phone normalization: {valid_phone_int.sum():,} valid phones in Internal ({valid_phone_int.sum()/len(internal_matched)*100:.1f}%) | {valid_phone_camp.sum():,} valid phones in Campaign ({valid_phone_camp.sum()/len(camp_df_clean)*100:.1f}%)")
+        st.info(f"📱 Phone normalization: {valid_phone_int.sum():,} valid phones in Internal ({internal_valid_pct:.1f}%) | {valid_phone_camp.sum():,} valid phones in Campaign ({campaign_valid_pct:.1f}%)")
         
         # Final matching
         final_matched = pd.merge(
