@@ -188,6 +188,13 @@ def format_amount(value):
     except:
         return str(value)
 
+def amount_series_to_numeric(series):
+    """Convert formatted or numeric amount values to numbers."""
+    return pd.to_numeric(
+        series.astype("string").str.replace(",", "", regex=False),
+        errors="coerce"
+    )
+
 def normalize_passbook(value):
     """Normalize passbook number by removing special characters"""
     if pd.isna(value):
@@ -679,7 +686,7 @@ def create_charts(df):
     df_chart = df.copy()
     amount_columns = ["Monthly_Amount", "Total_Paid", "Balance_Amount", "Scheme_Value", "Skipped_Amount"]
     for col in amount_columns:
-        df_chart[col] = df_chart[col].str.replace(',', '').astype(float)
+        df_chart[col] = amount_series_to_numeric(df_chart[col])
     
     # Status distribution
     status_counts = df_chart["Status"].value_counts()
@@ -851,7 +858,7 @@ if joining_file and payment_file:
                 with col5:
                     # Total skipped amount (excluding completed)
                     skipped_amounts = report[report["Status"] != "Completed"]["Skipped_Amount"]
-                    total_skipped = skipped_amounts.str.replace(',', '').astype(float).sum() if len(skipped_amounts) > 0 else 0
+                    total_skipped = amount_series_to_numeric(skipped_amounts).sum() if len(skipped_amounts) > 0 else 0
                     st.metric(
                         "Total Skipped Amount",
                         f"₹{total_skipped:,.0f}",
@@ -861,7 +868,7 @@ if joining_file and payment_file:
                 # Additional metrics
                 col6, col7, col8 = st.columns(3)
                 with col6:
-                    total_paid = report["Total_Paid"].str.replace(',', '').astype(float).mean()
+                    total_paid = amount_series_to_numeric(report["Total_Paid"]).mean()
                     st.metric("Average Paid per Scheme", f"₹{total_paid:,.0f}")
                 
                 with col7:
