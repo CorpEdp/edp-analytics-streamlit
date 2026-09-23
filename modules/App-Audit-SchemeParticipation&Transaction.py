@@ -1053,7 +1053,7 @@ def display_results(comparison, missing_trans, extra_trans, participation_df, co
                     return 'background-color: #FEE2E2; color: #991B1B'
                 return ''
             
-            styled_df = display_data_formatted[preview_cols].style.applymap(color_result, subset=['Final Result'])
+            styled_df = display_data_formatted[preview_cols].style.map(color_result, subset=['Final Result'])
             st.dataframe(styled_df, width="stretch", height=400)
         else:
             # Show without styling for large datasets

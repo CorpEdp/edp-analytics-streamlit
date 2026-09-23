@@ -661,9 +661,10 @@ class ReportGenerator:
 
         matched_count = final_report['Customer Payment'].notna().sum()
         not_enrolled_count = final_report['Not Enrolled'].sum()
-        if len(final_report) > 0:
-            st.info(f"📊 Final Match Results: {matched_count} out of {len(final_report)} records matched ({matched_count/len(final_report)*100:.2f}%)")
-            st.info(f"📊 Not Enrolled Customers: {not_enrolled_count} out of {len(final_report)} ({not_enrolled_count/len(final_report)*100:.2f}%)")
+        report_count = len(final_report)
+        if report_count > 0:
+            st.info(f"📊 Final Match Results: {matched_count} out of {report_count} records matched ({matched_count/report_count*100:.2f}%)")
+            st.info(f"📊 Not Enrolled Customers: {not_enrolled_count} out of {report_count} ({not_enrolled_count/report_count*100:.2f}%)")
 
         total_enrollment = final_report['Customer Enrollment Amount'].sum()
         total_payment = final_report['Customer Payment'].sum()

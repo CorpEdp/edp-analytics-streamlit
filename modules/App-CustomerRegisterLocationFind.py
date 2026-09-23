@@ -1255,8 +1255,9 @@ with tab_results:
 
 with tab_unknown:
     unknown_df = df[df["State"] == "Unknown"]
-    if len(unknown_df) > 0:
-        st.warning(f"⚠️ **{len(unknown_df):,} customers with unknown state** ({len(unknown_df)/len(df)*100:.1f}% of total)")
+    total_customers = len(df)
+    if len(unknown_df) > 0 and total_customers > 0:
+        st.warning(f"⚠️ **{len(unknown_df):,} customers with unknown state** ({len(unknown_df)/total_customers*100:.1f}% of total)")
 
         unique_unknown = unknown_df["Final Address"].value_counts()
         st.write("**Top 20 unknown addresses (most frequent first):**")

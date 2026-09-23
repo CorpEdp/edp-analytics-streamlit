@@ -606,6 +606,11 @@ if uploaded_file:
                 
                 # Summary metrics with custom styling
                 st.markdown("### 📊 Summary Statistics")
+                total_records = len(df)
+                valid_pct = valid_count / total_records * 100 if total_records else 0
+                duplicate_pct = duplicate_count / total_records * 100 if total_records else 0
+                invalid_pct = invalid_count / total_records * 100 if total_records else 0
+                clean_pct = clean_count / total_records * 100 if total_records else 0
                 
                 col1, col2, col3, col4, col5 = st.columns(5)
                 
@@ -623,7 +628,7 @@ if uploaded_file:
                     <div class="metric-container">
                         <div class="metric-icon">✅</div>
                         <div class="metric-value" style="color: #28a745;">{valid_count:,}</div>
-                        <div class="metric-label">Valid Numbers <span class="badge badge-success">{valid_count/len(df)*100:.1f}%</span></div>
+                        <div class="metric-label">Valid Numbers <span class="badge badge-success">{valid_pct:.1f}%</span></div>
                     </div>
                     """, unsafe_allow_html=True)
                 
@@ -632,7 +637,7 @@ if uploaded_file:
                     <div class="metric-container">
                         <div class="metric-icon">🔄</div>
                         <div class="metric-value" style="color: #dc3545;">{duplicate_count:,}</div>
-                        <div class="metric-label">Duplicates <span class="badge badge-danger">{duplicate_count/len(df)*100:.1f}%</span></div>
+                        <div class="metric-label">Duplicates <span class="badge badge-danger">{duplicate_pct:.1f}%</span></div>
                     </div>
                     """, unsafe_allow_html=True)
                 
@@ -641,7 +646,7 @@ if uploaded_file:
                     <div class="metric-container">
                         <div class="metric-icon">❌</div>
                         <div class="metric-value" style="color: #ffc107;">{invalid_count:,}</div>
-                        <div class="metric-label">Invalid Numbers <span class="badge badge-warning">{invalid_count/len(df)*100:.1f}%</span></div>
+                        <div class="metric-label">Invalid Numbers <span class="badge badge-warning">{invalid_pct:.1f}%</span></div>
                     </div>
                     """, unsafe_allow_html=True)
                 
@@ -650,7 +655,7 @@ if uploaded_file:
                     <div class="metric-container">
                         <div class="metric-icon">✨</div>
                         <div class="metric-value" style="color: #17a2b8;">{clean_count:,}</div>
-                        <div class="metric-label">Clean Records <span class="badge badge-info">{clean_count/len(df)*100:.1f}%</span></div>
+                        <div class="metric-label">Clean Records <span class="badge badge-info">{clean_pct:.1f}%</span></div>
                     </div>
                     """, unsafe_allow_html=True)
                 
