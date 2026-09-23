@@ -1887,6 +1887,8 @@ def generate_report_data(df, schemes, start_date=None, end_date=None):
         fa = s_first["Saved Amount"].sum()
         cc = len(s_coll)
         ca = s_coll["Saved Amount"].sum()
+        total_count = fc + cc
+        total_amount = fa + ca
         summary_rows.append({
             "Scheme": scheme,
             "First Enrollment Count": fc,
@@ -1897,6 +1899,9 @@ def generate_report_data(df, schemes, start_date=None, end_date=None):
             "Collection Amount": ca,
             "Avg Collection Count/Day": cc / report_day_count,
             "Avg Collection Amount/Day": ca / report_day_count,
+            "Total Count": total_count,
+            "Total Amount": total_amount,
+            "Total Avg Ticket": total_amount / total_count if total_count > 0 else 0,
         })
 
     if summary_rows:
@@ -1904,6 +1909,8 @@ def generate_report_data(df, schemes, start_date=None, end_date=None):
         gfa = sum(r["First Enrollment Amount"] for r in summary_rows)
         gcc = sum(r["Collection Count"] for r in summary_rows)
         gca = sum(r["Collection Amount"] for r in summary_rows)
+        total_count = gfc + gcc
+        total_amount = gfa + gca
 
         summary_rows.append({
             "Scheme": "Grand Total",
@@ -1915,6 +1922,9 @@ def generate_report_data(df, schemes, start_date=None, end_date=None):
             "Collection Amount": gca,
             "Avg Collection Count/Day": gcc / report_day_count,
             "Avg Collection Amount/Day": gca / report_day_count,
+            "Total Count": total_count,
+            "Total Amount": total_amount,
+            "Total Avg Ticket": total_amount / total_count if total_count > 0 else 0,
         })
 
     summary_df = pd.DataFrame(summary_rows)
