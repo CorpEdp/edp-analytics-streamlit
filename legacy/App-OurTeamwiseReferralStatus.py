@@ -375,9 +375,13 @@ def create_reporting_excel(overall_df, month_df, today_df, company_name="BHIMA J
     current_row += 1
     
     # Date and time info
-    latest_date = datetime.now().strftime("%I:%M %p")
+    report_generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ws.merge_cells(f'A{current_row}:J{current_row}')
-    info_cell = ws.cell(row=current_row, column=1, value=f"Data Till {latest_date}")
+    info_cell = ws.cell(
+        row=current_row,
+        column=1,
+        value=f"Report Generated: {report_generated_at}",
+    )
     info_cell.font = Font(size=11, italic=True)
     info_cell.alignment = Alignment(horizontal='center')
     current_row += 2
@@ -1884,30 +1888,6 @@ def render_category_split_tables(registered_df, joined_df, employee_dict, select
 
     render_category_comparison(registered_df, joined_df, employee_dict, selected_codes)
 
-def get_latest_data_time(df):
-    """Get the latest date/time from the data."""
-    latest_time = "N/A"
-    all_dates = []
-    
-    if "Registered Date" in df.columns:
-        reg_dates = df["Registered Date"].dropna()
-        if not reg_dates.empty:
-            all_dates.extend(reg_dates.tolist())
-    
-    if "Joined Date" in df.columns:
-        join_dates = df["Joined Date"].dropna()
-        if not join_dates.empty:
-            all_dates.extend(join_dates.tolist())
-    
-    if all_dates:
-        latest_date = max(all_dates)
-        if isinstance(latest_date, (pd.Timestamp, datetime)):
-            latest_time = latest_date.strftime("%I:%M %p")
-        else:
-            latest_time = datetime.now().strftime("%I:%M %p")
-    
-    return latest_time
-
 # ============================================================
 # MAIN APP
 # ============================================================
@@ -2344,9 +2324,10 @@ def main():
     # ============================================================
     # DISPLAY DATE RANGE IN REPORT HEADER
     # ============================================================
+    report_generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.markdown(f"""
     <div class="report-header">
-        📊 Report Period: {date_range_text} | Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        📊 Report Period: {date_range_text} | Generated: {report_generated_at}
     </div>
     """, unsafe_allow_html=True)
 
@@ -2412,9 +2393,6 @@ def main():
     # NEW: REPORTING SECTIONS - Overall, Current Month, Today
     # ============================================================
     
-    # Get latest data time from the file
-    latest_data_time = get_latest_data_time(employee_filtered_df)
-    
     st.markdown("""
     <div class="reporting-section">
         <div class="reporting-section-header">
@@ -2425,7 +2403,7 @@ def main():
     # ---- 1. OVERALL DETAILS ----
     st.markdown(f"""
     <div class="reporting-sub-header">
-        📊 Reporting Period: Overall Details | Data Till {latest_data_time}
+        📊 Reporting Period: Overall Details | Report Generated: {report_generated_at}
     </div>
     """, unsafe_allow_html=True)
     
@@ -2452,7 +2430,7 @@ def main():
     
     st.markdown(f"""
     <div class="reporting-sub-header-current">
-        📅 Reporting Period: {month_start.strftime('%B %d')}–{today.strftime('%B %d, %Y')} | Data Till {latest_data_time}
+        📅 Reporting Period: {month_start.strftime('%B %d')}–{today.strftime('%B %d, %Y')} | Report Generated: {report_generated_at}
     </div>
     """, unsafe_allow_html=True)
     
@@ -2485,7 +2463,7 @@ def main():
     # ---- 3. TODAY'S STATUS ----
     st.markdown(f"""
     <div class="reporting-sub-header-today">
-        📆 Date: {today.strftime('%d-%m-%Y')} | Data Till {latest_data_time}
+        📆 Date: {today.strftime('%d-%m-%Y')} | Report Generated: {report_generated_at}
     </div>
     """, unsafe_allow_html=True)
     
