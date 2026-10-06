@@ -228,16 +228,6 @@ def get_week_display(date):
     )
 
 
-def get_week_period_key(dates):
-    week_of_month = ((dates.dt.day - 1) // 7) + 1
-
-    return (
-        dates.dt.strftime("%Y-%m")
-        + "-W"
-        + week_of_month.astype(str)
-    )
-
-
 # ============================================================
 # CHANGE CALCULATION
 # ============================================================
@@ -1930,18 +1920,23 @@ def generate_aggregated_data_long(
 
     if aggregation_type == "week":
 
+        # Internal key remains YYYY-W##
+        # so chronological comparison stays correct.
         first_work["PeriodKey"] = (
-            get_week_period_key(first_work["Date"])
+            first_work["Date"]
+            .dt.strftime("%G-W%V")
         )
 
         coll_work["PeriodKey"] = (
-            get_week_period_key(coll_work["Date"])
+            coll_work["Date"]
+            .dt.strftime("%G-W%V")
         )
 
         period_source = df.copy()
 
         period_source["PeriodKey"] = (
-            get_week_period_key(period_source["Date"])
+            period_source["Date"]
+            .dt.strftime("%G-W%V")
         )
 
         display_lookup = {}
@@ -1951,10 +1946,13 @@ def generate_aggregated_data_long(
             .groupby("PeriodKey")
         ):
 
+            # Get the first date in this ISO week
             first_date = group[
                 "Date"
             ].min()
-
+            
+            # Use the actual date to determine the week number
+            # Week is based on day of month (1-7=Week1, 8-14=Week2, etc.)
             display_lookup[
                 period_key
             ] = get_week_display(
