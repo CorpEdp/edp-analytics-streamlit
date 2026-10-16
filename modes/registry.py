@@ -50,14 +50,6 @@ MODE_REGISTRY = [
         "source": "modules/App-CampaignReconciliationStudio.py",
     },
     {
-        "id": "campaign_transaction_analyzer",
-        "name": "Campaign Transaction Analyzer",
-        "description": "Legacy Streamlit mode converted from App-CampaignTransactionAnalyzer.py",
-        "category": "Campaign",
-        "module": "modes.campaign_transaction_analyzer",
-        "source": "modules/App-CampaignTransactionAnalyzer.py",
-    },
-    {
         "id": "customer_register_location_find",
         "name": "Customer Register Location Find",
         "description": "Legacy Streamlit mode converted from App-CustomerRegisterLocationFind.py",
