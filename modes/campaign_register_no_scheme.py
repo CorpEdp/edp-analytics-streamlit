@@ -1,7 +1,8 @@
 from core.config import LEGACY_DIR
 from core.loader import execute_legacy_script
 
-LEGACY_SOURCE = LEGACY_DIR / "ERP-CashfreeReconciliation.py"
+LEGACY_SOURCE = LEGACY_DIR / "Campaign-Register-No-Scheme.py"
+-CashfreeReconciliation.py"
 
 
 def render() -> None:
