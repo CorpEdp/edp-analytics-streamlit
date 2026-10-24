@@ -1,7 +1,7 @@
 from core.config import LEGACY_DIR
 from core.loader import execute_legacy_script
 
-LEGACY_SOURCE = LEGACY_DIR / "Campaign-Register-No-Scheme.py"
+LEGACY_SOURCE = LEGACY_DIR / "CampaignRegisterNo-Scheme.py"
 
 
 def render() -> None:
