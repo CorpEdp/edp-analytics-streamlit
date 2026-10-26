@@ -3,6 +3,8 @@ import pandas as pd
 from io import BytesIO
 import re
 import zipfile
+import hashlib
+from functools import lru_cache
 
 # -----------------------------------
 # Streamlit Configuration
@@ -15,11 +17,83 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("📍 Customer State & Language Finder")
-st.caption("Upload a customer report plus optional Bss Receipt / Sales Purchase files. "
-           "Unknown customers are resolved sequentially: Bss Receipt → Sales Purchase. "
-           "Export includes 10 sheets with Mobileno, State, District, Language, Template. "
-           "**Rows with empty/blank phone numbers are automatically removed.**")
+# -----------------------------------
+# 🎨 Look & feel (CSS only – no logic)
+# -----------------------------------
+
+st.markdown(
+    """
+<style>
+.block-container {padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1400px;}
+
+/* Hero header */
+.hero {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #db2777 100%);
+    padding: 1.7rem 2rem; border-radius: 20px; color: #fff;
+    margin-bottom: 1.4rem; box-shadow: 0 12px 32px rgba(79,70,229,.28);
+}
+.hero h1 {margin: 0 0 .35rem 0; font-size: 2.1rem; font-weight: 800; letter-spacing: -.5px; color:#fff;}
+.hero p {margin: 0; font-size: .98rem; opacity: .93; line-height: 1.55; color:#fff;}
+.hero .pill {
+    display: inline-block; background: rgba(255,255,255,.18); border-radius: 999px;
+    padding: .18rem .7rem; font-size: .78rem; margin: .7rem .4rem 0 0; font-weight: 600;
+}
+
+/* Section titles */
+.section-title {font-size: 1.15rem; font-weight: 700; margin: .2rem 0 .6rem 0;}
+.step-badge {
+    display:inline-block; background:#4f46e5; color:#fff; border-radius:50%;
+    width:26px; height:26px; line-height:26px; text-align:center; font-size:.85rem;
+    font-weight:700; margin-right:.5rem;
+}
+
+/* Metric cards */
+div[data-testid="stMetric"] {
+    background: rgba(128,128,128,.07); border: 1px solid rgba(128,128,128,.20);
+    padding: 16px 20px; border-radius: 16px; transition: transform .15s ease, box-shadow .15s ease;
+}
+div[data-testid="stMetric"]:hover {transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,.10);}
+div[data-testid="stMetricValue"] {font-weight: 800;}
+
+/* Buttons */
+.stDownloadButton button, .stButton button {
+    border-radius: 12px; font-weight: 600; padding: .55rem 1rem;
+    border: 1px solid rgba(128,128,128,.3); transition: all .15s ease;
+}
+.stDownloadButton button:hover {
+    border-color: #4f46e5; color: #4f46e5; transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(79,70,229,.18);
+}
+
+/* Tabs */
+button[data-baseweb="tab"] {font-weight: 600; border-radius: 10px 10px 0 0;}
+
+/* Uploaders & containers */
+section[data-testid="stFileUploaderDropzone"] {border-radius: 14px; border: 2px dashed rgba(124,58,237,.45);}
+div[data-testid="stExpander"] {border-radius: 14px; border: 1px solid rgba(128,128,128,.22);}
+div[data-testid="stDataFrame"] {border-radius: 12px; overflow: hidden;}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {border-right: 1px solid rgba(128,128,128,.2);}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+<div class="hero">
+  <h1>📍 Customer State &amp; Language Finder</h1>
+  <p>Upload a customer report plus optional <b>Bss Receipt</b> / <b>Sales Purchase</b> files.
+  Unknown customers are resolved sequentially: Bss Receipt → Sales Purchase.
+  Export includes 10 sheets with Mobileno, State, District, Language, Template.</p>
+  <span class="pill">🧹 Blank phone rows auto-removed</span>
+  <span class="pill">⚡ Cached &amp; fast</span>
+  <span class="pill">📦 20 Excel files + ZIP</span>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 
 # -----------------------------------
@@ -247,6 +321,60 @@ PINCODE_RANGES = [
 
 
 # -----------------------------------
+# ⚡ Pre-compiled regex (same patterns, same order → same results, just faster)
+# -----------------------------------
+
+_CITY_WORD_RE = [(re.compile(r'\b' + re.escape(c) + r'\b'), s) for c, s in city_state.items()]
+_DISTRICT_WORD_RE = [(re.compile(r'\b' + re.escape(d) + r'\b'), s) for d, s in district_state.items()]
+
+_FUZZY_PATTERNS = [
+    (r'tami[nl]?[a]?[d]?[nu]?[au]?[d]?', "Tamil Nadu"),
+    (r'tam[il]{1,2}[a]?[dn]?[au]?', "Tamil Nadu"),
+    (r'thami[zl]?[a]?[dn]?[au]?', "Tamil Nadu"),
+    (r'tami[zl]?[a]?[dn]?[au]?', "Tamil Nadu"),
+    (r'tut[tu]?[uk]?[ku]?[d]?[i]?', "Tamil Nadu"),
+    (r'th[uo]?[tu]?[t]?[uh]?[uk]?[ud]?[i]?', "Tamil Nadu"),
+    (r'co[iy]mb?[a]?t?[o]?[r]?[e]?', "Tamil Nadu"),
+    (r'coy[a]?mb[a]?[t]?[h]?[o]?[r]?[e]?', "Tamil Nadu"),
+    (r'tirup[pu]?r', "Tamil Nadu"),
+    (r'karaik[ku]?[ud]?[i]?', "Tamil Nadu"),
+    (r'ker[ae]l[ae]?', "Kerala"),
+    (r'karnat[ai]?k[ae]?', "Karnataka"),
+    (r'maharas[ht]{1,2}r[ae]?', "Maharashtra"),
+    (r'guj[ar]?[ae]?t', "Gujarat"),
+    (r'rajas[ht]{1,2}[ae]?n', "Rajasthan"),
+    (r'andhra[ ]?pradesh', "Andhra Pradesh"),
+    (r'uttar[ ]?pradesh', "Uttar Pradesh"),
+    (r'madhya[ ]?pradesh', "Madhya Pradesh"),
+    (r'jammu[ ]?[&]?[ ]?kashmir', "Jammu & Kashmir"),
+    (r'j&k', "Jammu & Kashmir"),
+    (r'himachal[ ]?pradesh', "Himachal Pradesh"),
+    (r'uttarakhand', "Uttarakhand"),
+    (r'uttaranchal', "Uttarakhand"),
+]
+_FUZZY_COMPILED = [(re.compile(p, re.IGNORECASE), s) for p, s in _FUZZY_PATTERNS]
+
+_EXPLICIT_STATE_KEYWORDS = {
+    "kerala": "Kerala", "karnataka": "Karnataka",
+    "tamil nadu": "Tamil Nadu", "tamilnadu": "Tamil Nadu",
+    "andhra pradesh": "Andhra Pradesh", "andhrapradesh": "Andhra Pradesh",
+    "telangana": "Telangana", "maharashtra": "Maharashtra",
+    "gujarat": "Gujarat", "west bengal": "West Bengal", "westbengal": "West Bengal",
+    "odisha": "Odisha", "orissa": "Odisha",
+    "uttar pradesh": "Uttar Pradesh", "uttarpradesh": "Uttar Pradesh",
+    "bihar": "Bihar", "rajasthan": "Rajasthan",
+    "madhya pradesh": "Madhya Pradesh", "madhyapradesh": "Madhya Pradesh",
+    "delhi": "Delhi", "punjab": "Punjab", "haryana": "Haryana",
+    "jharkhand": "Jharkhand", "chhattisgarh": "Chhattisgarh",
+    "chattisgarh": "Chhattisgarh", "assam": "Assam", "goa": "Goa",
+    "puducherry": "Puducherry", "pondicherry": "Puducherry",
+    "jammu & kashmir": "Jammu & Kashmir", "jammu and kashmir": "Jammu & Kashmir",
+    "himachal pradesh": "Himachal Pradesh", "himachalpradesh": "Himachal Pradesh",
+    "uttarakhand": "Uttarakhand", "uttaranchal": "Uttarakhand",
+}
+
+
+# -----------------------------------
 # Text helpers
 # -----------------------------------
 
@@ -288,47 +416,13 @@ def get_state_from_variation(text):
 
 def fuzzy_state_match(text):
     clean = clean_text(text)
-    patterns = [
-        (r'tami[nl]?[a]?[d]?[nu]?[au]?[d]?', "Tamil Nadu"),
-        (r'tam[il]{1,2}[a]?[dn]?[au]?', "Tamil Nadu"),
-        (r'thami[zl]?[a]?[dn]?[au]?', "Tamil Nadu"),
-        (r'tami[zl]?[a]?[dn]?[au]?', "Tamil Nadu"),
-        (r'tut[tu]?[uk]?[ku]?[d]?[i]?', "Tamil Nadu"),
-        (r'th[uo]?[tu]?[t]?[uh]?[uk]?[ud]?[i]?', "Tamil Nadu"),
-        (r'co[iy]mb?[a]?t?[o]?[r]?[e]?', "Tamil Nadu"),
-        (r'coy[a]?mb[a]?[t]?[h]?[o]?[r]?[e]?', "Tamil Nadu"),
-        (r'tirup[pu]?r', "Tamil Nadu"),
-        (r'karaik[ku]?[ud]?[i]?', "Tamil Nadu"),
-        (r'ker[ae]l[ae]?', "Kerala"),
-        (r'karnat[ai]?k[ae]?', "Karnataka"),
-        (r'maharas[ht]{1,2}r[ae]?', "Maharashtra"),
-        (r'guj[ar]?[ae]?t', "Gujarat"),
-        (r'rajas[ht]{1,2}[ae]?n', "Rajasthan"),
-        (r'andhra[ ]?pradesh', "Andhra Pradesh"),
-        (r'uttar[ ]?pradesh', "Uttar Pradesh"),
-        (r'madhya[ ]?pradesh', "Madhya Pradesh"),
-        (r'jammu[ ]?[&]?[ ]?kashmir', "Jammu & Kashmir"),
-        (r'j&k', "Jammu & Kashmir"),
-        (r'himachal[ ]?pradesh', "Himachal Pradesh"),
-        (r'uttarakhand', "Uttarakhand"),
-        (r'uttaranchal', "Uttarakhand"),
-    ]
-    for pattern, state in patterns:
-        if re.search(pattern, clean, re.IGNORECASE):
+    for pattern, state in _FUZZY_COMPILED:
+        if pattern.search(clean):
             return state
     return None
 
 
-def select_address(row):
-    for col in ("Permanent Address", "Temporary Address", "Nearby Showroom"):
-        val = row.get(col, "")
-        if pd.notna(val) and str(val).strip():
-            return str(val).strip()
-    return ""
-
-
-@st.cache_data(show_spinner=False)
-def find_location(address):
+def find_location_uncached(address):
     if pd.isna(address) or str(address).strip() == "":
         return "Unknown", "English"
     original = str(address)
@@ -336,29 +430,11 @@ def find_location(address):
     if not clean_address:
         return "Unknown", "English"
 
-    explicit_state_keywords = {
-        "kerala": "Kerala", "karnataka": "Karnataka",
-        "tamil nadu": "Tamil Nadu", "tamilnadu": "Tamil Nadu",
-        "andhra pradesh": "Andhra Pradesh", "andhrapradesh": "Andhra Pradesh",
-        "telangana": "Telangana", "maharashtra": "Maharashtra",
-        "gujarat": "Gujarat", "west bengal": "West Bengal", "westbengal": "West Bengal",
-        "odisha": "Odisha", "orissa": "Odisha",
-        "uttar pradesh": "Uttar Pradesh", "uttarpradesh": "Uttar Pradesh",
-        "bihar": "Bihar", "rajasthan": "Rajasthan",
-        "madhya pradesh": "Madhya Pradesh", "madhyapradesh": "Madhya Pradesh",
-        "delhi": "Delhi", "punjab": "Punjab", "haryana": "Haryana",
-        "jharkhand": "Jharkhand", "chhattisgarh": "Chhattisgarh",
-        "chattisgarh": "Chhattisgarh", "assam": "Assam", "goa": "Goa",
-        "puducherry": "Puducherry", "pondicherry": "Puducherry",
-        "jammu & kashmir": "Jammu & Kashmir", "jammu and kashmir": "Jammu & Kashmir",
-        "himachal pradesh": "Himachal Pradesh", "himachalpradesh": "Himachal Pradesh",
-        "uttarakhand": "Uttarakhand", "uttaranchal": "Uttarakhand",
-    }
-    for keyword, state in explicit_state_keywords.items():
+    for keyword, state in _EXPLICIT_STATE_KEYWORDS.items():
         if keyword in clean_address:
             return state, state_language.get(state, "English")
-    for city, state in city_state.items():
-        if re.search(r'\b' + re.escape(city) + r'\b', clean_address):
+    for pattern, state in _CITY_WORD_RE:
+        if pattern.search(clean_address):
             return state, state_language.get(state, "English")
     variation_state = get_state_from_variation(clean_address)
     if variation_state:
@@ -375,6 +451,9 @@ def find_location(address):
         if state:
             return state, state_language.get(state, "English")
     return "Other", "English"
+
+
+find_location = lru_cache(maxsize=None)(find_location_uncached)
 
 
 # -----------------------------------
@@ -471,19 +550,22 @@ def normalize_mobile_loose(x):
     return s if 10 <= len(s) <= 15 else None
 
 
+_normalize_mobile_cached = lru_cache(maxsize=None)(normalize_mobile)
+
+
 # -----------------------------------
 # District helpers
 # -----------------------------------
 
-def district_to_state(district):
+def district_to_state_uncached(district):
     if pd.isna(district) or not str(district).strip():
         return None
     clean = clean_text(district)
-    for d, st_ in district_state.items():
-        if re.search(r'\b' + re.escape(d) + r'\b', clean):
+    for pattern, st_ in _DISTRICT_WORD_RE:
+        if pattern.search(clean):
             return st_
-    for d, st_ in city_state.items():
-        if re.search(r'\b' + re.escape(d) + r'\b', clean):
+    for pattern, st_ in _CITY_WORD_RE:
+        if pattern.search(clean):
             return st_
     for d, st_ in district_state.items():
         if d in clean:
@@ -494,6 +576,10 @@ def district_to_state(district):
     return get_state_from_variation(clean) or fuzzy_state_match(clean)
 
 
+district_to_state = lru_cache(maxsize=None)(district_to_state_uncached)
+
+
+@lru_cache(maxsize=None)
 def infer_district_from_address(addr):
     if pd.isna(addr) or not str(addr).strip():
         return ""
@@ -517,24 +603,37 @@ def fill_language_from_district(df_dist, district_col=None, language_col=None):
         language_col = "Language"
     if district_col is None:
         return df_dist
-    for idx, row in df_dist.iterrows():
-        lang = row.get(language_col, "")
-        if pd.notna(lang) and str(lang).strip() and str(lang).strip().lower() != "nan":
-            continue
-        st_ = district_to_state(row.get(district_col, ""))
-        if st_:
-            df_dist.at[idx, language_col] = state_language.get(st_, "English")
+
+    df_dist[language_col] = df_dist[language_col].astype(object)
+    lang = df_dist[language_col]
+    lang_str = lang.astype(str).str.strip()
+    # rows whose language is blank / "nan" get filled from district (same rule as before)
+    blank = lang.isna() | (lang_str == "") | (lang_str.str.lower() == "nan")
+    if not blank.any():
+        return df_dist
+
+    def _lang_for(d):
+        st_ = district_to_state(d)
+        return state_language.get(st_, "English") if st_ else None
+
+    new_vals = df_dist.loc[blank, district_col].map(_lang_for)
+    valid = new_vals.notna()
+    if valid.any():
+        df_dist.loc[new_vals.index[valid], language_col] = new_vals[valid]
     return df_dist
 
 
+def _blank_safe_str(v):
+    return str(v or "").strip()
+
+
 # -----------------------------------
-# 🚀 CACHED DATA BUILDER
+# 🚀 EXPORT BUILDER (same logic, vectorized)
 # -----------------------------------
 
-@st.cache_data(show_spinner="Building export sheets (only runs once)...")
-def build_all_sheets_cached(df, bss_df, sales_df, mobile_col_f1, invested_col_f1, mobile_set_sales, mobile_set_bss):
+def build_all_sheets(df, bss_df, sales_df, mobile_col_f1, invested_col_f1, mobile_set_sales, mobile_set_bss):
     EXPORT_COLS = ["Mobileno", "State", "District", "Language", "Template"]
-    
+
     # ---- Sheet 1: Customer Report rows ----
     if mobile_col_f1:
         mobileno_series = df["_Mobile_Key"].fillna("").astype(str).str.strip()
@@ -566,8 +665,10 @@ def build_all_sheets_cached(df, bss_df, sales_df, mobile_col_f1, invested_col_f1
         except ValueError:
             return False
 
+    zero_series = df[invested_col_f1].apply(is_zero_invested) if invested_col_f1 else None
+
     if invested_col_f1:
-        zero_mask = df[invested_col_f1].apply(is_zero_invested)
+        zero_mask = zero_series
         valid_mobile_mask = df["_Mobile_Key"].notna()
         sheet2 = export_df[zero_mask.reindex(export_df.index) & valid_mobile_mask.reindex(export_df.index)].copy()
     else:
@@ -594,29 +695,32 @@ def build_all_sheets_cached(df, bss_df, sales_df, mobile_col_f1, invested_col_f1
 
         src = fill_language_from_district(src_df.copy(), district_col=dcol, language_col=lcol)
 
-        rows = []
-        for _, row in src.iterrows():
-            raw_mobile = row.get(mcol, "")
-            key = normalize_mobile(raw_mobile)
-            dist_val = str(row.get(dcol, "") or "").strip() if dcol else ""
-            lang_val = str(row.get(lcol, "") or "").strip() if lcol else ""
-            state_val = district_to_state(dist_val) or ""
-            if not lang_val:
-                lang_val = state_language.get(state_val, "English") if state_val else "English"
-            template_val = "Tamil" if lang_val == "Tamil" else "English"
-            rows.append({
-                "Mobileno": key or "",
-                "State": state_val,
-                "District": dist_val,
-                "Language": lang_val,
-                "Template": template_val,
-                "_key": key,
-            })
+        keys = src[mcol].map(_normalize_mobile_cached)
+        if dcol:
+            dist_val = src[dcol].map(_blank_safe_str)
+        else:
+            dist_val = pd.Series([""] * len(src), index=src.index)
+        if lcol:
+            lang_val = src[lcol].map(_blank_safe_str)
+        else:
+            lang_val = pd.Series([""] * len(src), index=src.index)
 
-        out = pd.DataFrame(rows)
+        state_val = dist_val.map(lambda d: district_to_state(d) or "")
+        fallback = state_val.map(lambda s: state_language.get(s, "English") if s else "English")
+        lang_val = lang_val.where(lang_val != "", fallback)
+        template_val = lang_val.map(lambda l: "Tamil" if l == "Tamil" else "English")
+
+        out = pd.DataFrame({
+            "Mobileno": keys.fillna(""),
+            "State": state_val,
+            "District": dist_val,
+            "Language": lang_val,
+            "Template": template_val,
+            "_key": keys,
+        })
         out = out[out["Mobileno"] != ""]
 
-        matched_mask = out["_key"].apply(lambda k: bool(k) and k in customer_mobile_set)
+        matched_mask = out["_key"].isin(customer_mobile_set)
         matched = out[matched_mask][EXPORT_COLS].reset_index(drop=True)
         unmatched = out[~matched_mask][EXPORT_COLS].reset_index(drop=True)
         return matched, unmatched
@@ -626,7 +730,7 @@ def build_all_sheets_cached(df, bss_df, sales_df, mobile_col_f1, invested_col_f1
 
     # Determine invested mobiles
     if invested_col_f1:
-        invested_mask_cust = ~df[invested_col_f1].apply(is_zero_invested)
+        invested_mask_cust = ~zero_series
         invested_mobiles = set(df.loc[invested_mask_cust, "_Mobile_Key"].dropna().astype(str))
     else:
         invested_mobiles = mobile_set_sales.union(mobile_set_bss)
@@ -634,7 +738,7 @@ def build_all_sheets_cached(df, bss_df, sales_df, mobile_col_f1, invested_col_f1
     sheet7_purch_invested = sheet3_sales_matched[
         sheet3_sales_matched["Mobileno"].isin(invested_mobiles)
     ].reset_index(drop=True)
-    
+
     sheet8_purch_no_invested = sheet3_sales_matched[
         ~sheet3_sales_matched["Mobileno"].isin(invested_mobiles)
     ].reset_index(drop=True)
@@ -642,7 +746,7 @@ def build_all_sheets_cached(df, bss_df, sales_df, mobile_col_f1, invested_col_f1
     sheet9_bss_invested = sheet4_bss_matched[
         sheet4_bss_matched["Mobileno"].isin(invested_mobiles)
     ].reset_index(drop=True)
-    
+
     sheet10_bss_no_invested = sheet4_bss_matched[
         ~sheet4_bss_matched["Mobileno"].isin(invested_mobiles)
     ].reset_index(drop=True)
@@ -662,118 +766,7 @@ def build_all_sheets_cached(df, bss_df, sales_df, mobile_col_f1, invested_col_f1
 
 
 # -----------------------------------
-# Sidebar
-# -----------------------------------
-
-with st.sidebar:
-    st.header("ℹ️ How it works")
-    st.markdown(
-        "1. Upload the **customer report** (required) — `.xlsx` / `.csv`\n"
-        "2. Optionally upload **Bss Receipt** and **Sales Purchase** files\n"
-        "3. State / District / Language detected from address\n"
-        "4. **Unknown** customers re-checked **sequentially**:\n"
-        "   - First: Bss Receipt (`Mobileno → District → Language`)\n"
-        "   - Then: Sales Purchase\n"
-        "5. Download **20 Excel files** (10 reports × 2 languages)\n"
-        "   - `Tamil` customers go to the Tamil file\n"
-        "   - All other languages go to the English file\n"
-        "   - **Or download all 20 in one ZIP**"
-    )
-    st.divider()
-    st.subheader("Customer Report")
-    st.markdown("- **Permanent Address** *(required)*\n- Temporary Address\n"
-                "- Nearby Showroom\n- Mobile column (any common name) — enables fallback lookup\n"
-                "- Invested column — enables Sheet 2, 7, 8, 9, 10 (Invested splitting)")
-    st.subheader("Bss Receipt / Sales Purchase")
-    st.markdown("- `Sr` `Date` `Mobileno` `District` `Language`\n"
-                "- District → State → Language auto-filled if Language is blank\n"
-                "- Unmatched sheets pull District/State/Language from their own file row")
-    st.divider()
-    st.caption("📱 Phone cleaning follows reference logic: strips spaces/hyphens/brackets/plus, "
-               "removes letters, +91 → 10-digit (only if valid mobile), leading zeros stripped.")
-
-
-# -----------------------------------
-# Uploaders
-# -----------------------------------
-
-st.subheader("1) Upload Files")
-col_u1, col_u2, col_u3 = st.columns(3)
-with col_u1:
-    uploaded_file = st.file_uploader("Customer Report *", type=["xlsx", "csv"], key="f1")
-with col_u2:
-    uploaded_bss = st.file_uploader("Bss Receipt (optional)", type=["xlsx", "csv"], key="f2")
-with col_u3:
-    uploaded_sales = st.file_uploader("Sales Purchase (optional)", type=["xlsx", "csv"], key="f3")
-
-if not uploaded_file:
-    st.info("👋 Upload the Customer Report to get started. Bss Receipt and Sales Purchase are optional.")
-    st.stop()
-
-
-def load_any(f):
-    if f is None:
-        return None
-    try:
-        if f.name.lower().endswith(".xlsx"):
-            return pd.read_excel(f, dtype=str)
-        return pd.read_csv(f, dtype=str)
-    except Exception as e:
-        st.error(f"❌ Couldn't read `{f.name}`: {e}")
-        return None
-
-
-# ---- Load customer report ----
-df = load_any(uploaded_file)
-if df is None or df.empty:
-    st.stop()
-if "Permanent Address" not in df.columns:
-    st.error("❌ 'Permanent Address' column missing in Customer Report. Found: " + ", ".join(df.columns))
-    st.stop()
-
-for c in ("Temporary Address", "Nearby Showroom"):
-    if c not in df.columns:
-        df[c] = ""
-
-df["Final Address"] = df.apply(select_address, axis=1)
-
-
-# ---- Load Bss + Sales ----
-bss_df = load_any(uploaded_bss) if uploaded_bss else None
-sales_df = load_any(uploaded_sales) if uploaded_sales else None
-
-mobile_col_f1 = find_mobile_col(df.columns)
-invested_col_f1 = find_invested_col(df.columns)
-
-if mobile_col_f1:
-    df["_Mobile_Key"] = df[mobile_col_f1].apply(normalize_mobile)
-else:
-    df["_Mobile_Key"] = None
-
-
-# -----------------------------------
-# Address-based detection on Customer Report
-# -----------------------------------
-
-progress_bar = st.progress(0, text="Detecting states and languages...")
-states, languages = [], []
-total_rows = len(df)
-chunk = max(1, total_rows // 100)
-for i, addr in enumerate(df["Final Address"]):
-    state, language = find_location(addr)
-    states.append(state)
-    languages.append(language)
-    if i % chunk == 0 or i == total_rows - 1:
-        progress_bar.progress((i + 1) / total_rows,
-                              text=f"Detecting states and languages... ({i+1:,}/{total_rows:,})")
-progress_bar.empty()
-
-df["State"] = states
-df["Language"] = languages
-
-
-# -----------------------------------
-# Build lookups for fallback resolution
+# Lookups for fallback resolution
 # -----------------------------------
 
 def build_mobile_lookup(src_df, src_name):
@@ -796,22 +789,23 @@ def build_mobile_lookup(src_df, src_name):
 
     src = fill_language_from_district(src_df.copy(), district_col=dcol, language_col=lcol)
 
+    keys = src[mcol].map(_normalize_mobile_cached).tolist()
+    dists = src[dcol].tolist() if dcol else [""] * len(src)
+    langs = src[lcol].tolist() if lcol else [""] * len(src)
+
     lookup = {}
-    for _, row in src.iterrows():
-        key = normalize_mobile(row.get(mcol))
-        if not key:
+    for key, dist, lang in zip(keys, dists, langs):
+        if not key or key in lookup:
             continue
-        dist = row.get(dcol, "") if dcol else ""
-        lang = row.get(lcol, "") if lcol else ""
         state_ = district_to_state(dist)
         if not (pd.notna(lang) and str(lang).strip()):
             lang = state_language.get(state_, "English") if state_ else "English"
-        lookup.setdefault(key, {
+        lookup[key] = {
             "District": str(dist).strip() if pd.notna(dist) else "",
             "State": state_,
             "Language": lang,
             "Source": src_name,
-        })
+        }
     stats["unique_mobiles"] = len(lookup)
     stats["with_state"] = sum(1 for v in lookup.values() if v.get("State"))
     return lookup, stats
@@ -823,27 +817,21 @@ def build_mobile_set(src_df):
     mcol = find_mobile_col(src_df.columns)
     if not mcol:
         return set()
-    out = set()
-    for _, row in src_df.iterrows():
-        k = normalize_mobile(row.get(mcol))
-        if k:
-            out.add(k)
-    return out
+    return {k for k in src_df[mcol].map(_normalize_mobile_cached) if k}
 
 
 def _apply_lookup_to_unknown(df, lookup, source_label):
+    if not lookup:
+        return 0
+    cand = df["State"].isin(("Unknown", "Other")) & df["_Mobile_Key"].isin(list(lookup.keys()))
+    idxs = df.index[cand]
     resolved = 0
-    for idx, row in df.iterrows():
-        if row["State"] not in ("Unknown", "Other"):
-            continue
-        key = row.get("_Mobile_Key")
-        if not key:
-            continue
+    for idx, key in zip(idxs, df.loc[idxs, "_Mobile_Key"]):
         hit = lookup.get(key)
         if not hit:
             continue
-        df.at[idx, "State"] = hit.get("State") or row["State"]
-        df.at[idx, "Language"] = hit.get("Language") or row["Language"]
+        df.at[idx, "State"] = hit.get("State") or df.at[idx, "State"]
+        df.at[idx, "Language"] = hit.get("Language") or df.at[idx, "Language"]
         if hit.get("District") and str(hit["District"]).strip():
             df.at[idx, "_District"] = str(hit["District"]).strip()
         df.at[idx, "_MatchedFrom"] = source_label
@@ -851,42 +839,282 @@ def _apply_lookup_to_unknown(df, lookup, source_label):
     return resolved
 
 
-lookup_bss, stats_bss = build_mobile_lookup(bss_df, "Bss Receipt")
-lookup_sales, stats_sales = build_mobile_lookup(sales_df, "Sales Purchase")
+# -----------------------------------
+# File reading
+# -----------------------------------
 
-mobile_set_bss = build_mobile_set(bss_df)
-mobile_set_sales = build_mobile_set(sales_df)
+def _read_df(name, data):
+    if name.lower().endswith(".xlsx"):
+        return pd.read_excel(BytesIO(data), dtype=str)
+    return pd.read_csv(BytesIO(data), dtype=str)
 
-if not mobile_col_f1:
-    st.warning("⚠️ No mobile column found in the Customer Report — mobile fallback skipped.")
-else:
-    valid_mobiles = df['_Mobile_Key'].notna().sum()
-    st.caption(f"📱 Mobile column in Customer Report: `{mobile_col_f1}` — "
-               f"{valid_mobiles:,} valid 10-digit mobiles after normalization")
 
-with st.expander("🔎 Mobile Normalization Check (verify +91 → 10 digit)", expanded=False):
+# -----------------------------------
+# 🚀 FULL PIPELINE — runs ONCE per upload, then served from cache
+# (filters / tabs / searches no longer re-run any heavy work)
+# -----------------------------------
+
+@st.cache_resource(show_spinner="⚙️ Detecting states, languages & resolving unknowns (runs once per upload)...")
+def run_pipeline(token, _cust_bytes, cust_name, _bss_bytes, bss_name, _sales_bytes, sales_name):
+    res = {"fatal": None, "warnings": []}
+
+    # ---- Load customer report ----
+    try:
+        df = _read_df(cust_name, _cust_bytes)
+    except Exception as e:
+        res["fatal"] = f"❌ Couldn't read `{cust_name}`: {e}"
+        return res
+    if df is None or df.empty:
+        res["fatal"] = "❌ The Customer Report is empty."
+        return res
+    if "Permanent Address" not in df.columns:
+        res["fatal"] = "❌ 'Permanent Address' column missing in Customer Report. Found: " + ", ".join(map(str, df.columns))
+        return res
+
+    for c in ("Temporary Address", "Nearby Showroom"):
+        if c not in df.columns:
+            df[c] = ""
+
+    # Final Address (same rule as select_address, vectorized)
+    final_addr = pd.Series("", index=df.index, dtype=object)
+    for col in reversed(("Permanent Address", "Temporary Address", "Nearby Showroom")):
+        s = df[col].astype(str).str.strip()
+        valid = df[col].notna() & (s != "")
+        final_addr = final_addr.where(~valid, s)
+    df["Final Address"] = final_addr
+
+    # ---- Load Bss + Sales ----
+    def _safe(name, data):
+        if data is None:
+            return None
+        try:
+            return _read_df(name, data)
+        except Exception as e:
+            res["warnings"].append(f"❌ Couldn't read `{name}`: {e}")
+            return None
+
+    bss_df = _safe(bss_name, _bss_bytes)
+    sales_df = _safe(sales_name, _sales_bytes)
+
+    mobile_col_f1 = find_mobile_col(df.columns)
+    invested_col_f1 = find_invested_col(df.columns)
+
+    if mobile_col_f1:
+        df["_Mobile_Key"] = df[mobile_col_f1].map(_normalize_mobile_cached)
+    else:
+        df["_Mobile_Key"] = None
+
+    # ---- Address-based detection (unique addresses only) ----
+    uniq = df["Final Address"].unique()
+    loc_map = {a: find_location(a) for a in uniq}
+    df["State"] = df["Final Address"].map(lambda a: loc_map[a][0])
+    df["Language"] = df["Final Address"].map(lambda a: loc_map[a][1])
+
+    # ---- Lookups ----
+    lookup_bss, stats_bss = build_mobile_lookup(bss_df, "Bss Receipt")
+    lookup_sales, stats_sales = build_mobile_lookup(sales_df, "Sales Purchase")
+
+    mobile_set_bss = build_mobile_set(bss_df)
+    mobile_set_sales = build_mobile_set(sales_df)
+
+    valid_mobiles = int(df["_Mobile_Key"].notna().sum()) if mobile_col_f1 else 0
+    sample = None
     if mobile_col_f1:
         sample = pd.DataFrame({
             "Raw value": df[mobile_col_f1].head(10).astype(str).values,
             "Normalized": df["_Mobile_Key"].head(10).values,
         })
-        st.dataframe(sample, hide_index=True, width="stretch")
-    else:
-        st.info("No mobile column detected in Customer Report.")
 
-df["_MatchedFrom"] = ""
-df["_District"] = ""
+    df["_MatchedFrom"] = ""
+    df["_District"] = ""
 
-resolved_bss = _apply_lookup_to_unknown(df, lookup_bss, "Bss Receipt")
-resolved_sales = _apply_lookup_to_unknown(df, lookup_sales, "Sales Purchase")
+    resolved_bss = _apply_lookup_to_unknown(df, lookup_bss, "Bss Receipt")
+    resolved_sales = _apply_lookup_to_unknown(df, lookup_sales, "Sales Purchase")
+
+    df["Template"] = df["Language"].map(lambda lang: "Tamil" if lang == "Tamil" else "English")
+
+    blank_district_mask = df["_District"].fillna("").astype(str).str.strip() == ""
+    df.loc[blank_district_mask, "_District"] = (
+        df.loc[blank_district_mask, "Final Address"].map(infer_district_from_address)
+    )
+
+    res.update({
+        "df": df, "bss_df": bss_df, "sales_df": sales_df,
+        "mobile_col_f1": mobile_col_f1, "invested_col_f1": invested_col_f1,
+        "mobile_set_bss": mobile_set_bss, "mobile_set_sales": mobile_set_sales,
+        "stats_bss": stats_bss, "stats_sales": stats_sales,
+        "resolved_bss": resolved_bss, "resolved_sales": resolved_sales,
+        "valid_mobiles": valid_mobiles, "sample": sample,
+    })
+    return res
+
+
+# -----------------------------------
+# 📦 EXPORT FILES — built ONCE per upload (20 xlsx + zip)
+# -----------------------------------
+
+try:
+    import xlsxwriter  # noqa: F401
+    _XLSX_ENGINE = "xlsxwriter"
+except ImportError:
+    _XLSX_ENGINE = "openpyxl"
+
+
+def _to_xlsx_bytes(frame):
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine=_XLSX_ENGINE) as writer:
+        frame.to_excel(writer, sheet_name="Sheet1", index=False, startrow=0)
+    return buf.getvalue()
+
+
+@st.cache_resource(show_spinner="📦 Building 20 Excel files & ZIP (runs once per upload)...")
+def build_exports(token, _res):
+    sheets, dropped_count = build_all_sheets(
+        _res["df"], _res["bss_df"], _res["sales_df"], _res["mobile_col_f1"],
+        _res["invested_col_f1"], _res["mobile_set_sales"], _res["mobile_set_bss"],
+    )
+
+    files, splits, summary_rows = {}, {}, []
+    zip_buf = BytesIO()
+    total_files = 0
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for _, full_title in SHEET_META:
+            data = sheets[full_title]
+            tamil = data[data["Language"] == "Tamil"].reset_index(drop=True)
+            english = data[data["Language"] != "Tamil"].reset_index(drop=True)
+            splits[full_title] = (tamil, english)
+            summary_rows.append({
+                "Report": full_title,
+                "Tamil Rows": len(tamil),
+                "English Rows": len(english),
+                "Total Rows": len(data),
+            })
+            for label, subset in (("Tamil", tamil), ("English", english)):
+                if len(subset) == 0:
+                    continue
+                b = _to_xlsx_bytes(subset)
+                files[(full_title, label)] = b
+                zf.writestr(f"{full_title} - {label}.xlsx", b)
+                total_files += 1
+
+    return {
+        "dropped_count": dropped_count,
+        "files": files,
+        "splits": splits,
+        "summary": pd.DataFrame(summary_rows),
+        "zip_bytes": zip_buf.getvalue(),
+        "total_files": total_files,
+    }
+
+
+# -----------------------------------
+# Sidebar
+# -----------------------------------
+
+with st.sidebar:
+    st.header("ℹ️ How it works")
+    st.markdown(
+        "1. Upload the **customer report** (required) — `.xlsx` / `.csv`\n"
+        "2. Optionally upload **Bss Receipt** and **Sales Purchase** files\n"
+        "3. State / District / Language detected from address\n"
+        "4. **Unknown** customers re-checked **sequentially**:\n"
+        "   - First: Bss Receipt (`Mobileno → District → Language`)\n"
+        "   - Then: Sales Purchase\n"
+        "5. Download **20 Excel files** (10 reports × 2 languages)\n"
+        "   - `Tamil` customers go to the Tamil file\n"
+        "   - All other languages go to the English file\n"
+        "   - **Or download all 20 in one ZIP**"
+    )
+    st.divider()
+    with st.expander("📄 Customer Report columns", expanded=False):
+        st.markdown("- **Permanent Address** *(required)*\n- Temporary Address\n"
+                    "- Nearby Showroom\n- Mobile column (any common name) — enables fallback lookup\n"
+                    "- Invested column — enables Sheet 2, 7, 8, 9, 10 (Invested splitting)")
+    with st.expander("🧾 Bss Receipt / Sales Purchase columns", expanded=False):
+        st.markdown("- `Sr` `Date` `Mobileno` `District` `Language`\n"
+                    "- District → State → Language auto-filled if Language is blank\n"
+                    "- Unmatched sheets pull District/State/Language from their own file row")
+    st.divider()
+    st.caption("📱 Phone cleaning follows reference logic: strips spaces/hyphens/brackets/plus, "
+               "removes letters, +91 → 10-digit (only if valid mobile), leading zeros stripped.")
+
+
+# -----------------------------------
+# Uploaders
+# -----------------------------------
+
+st.markdown('<div class="section-title"><span class="step-badge">1</span>Upload Files</div>',
+            unsafe_allow_html=True)
+col_u1, col_u2, col_u3 = st.columns(3)
+with col_u1:
+    with st.container(border=True):
+        st.markdown("**👥 Customer Report** · required")
+        uploaded_file = st.file_uploader("Customer Report *", type=["xlsx", "csv"], key="f1",
+                                         label_visibility="collapsed")
+with col_u2:
+    with st.container(border=True):
+        st.markdown("**🧾 Bss Receipt** · optional")
+        uploaded_bss = st.file_uploader("Bss Receipt (optional)", type=["xlsx", "csv"], key="f2",
+                                        label_visibility="collapsed")
+with col_u3:
+    with st.container(border=True):
+        st.markdown("**🛒 Sales Purchase** · optional")
+        uploaded_sales = st.file_uploader("Sales Purchase (optional)", type=["xlsx", "csv"], key="f3",
+                                          label_visibility="collapsed")
+
+if not uploaded_file:
+    st.info("👋 Upload the Customer Report to get started. Bss Receipt and Sales Purchase are optional.")
+    st.stop()
+
+
+# -----------------------------------
+# Run (cached) pipeline
+# -----------------------------------
+
+cust_bytes = uploaded_file.getvalue()
+bss_bytes = uploaded_bss.getvalue() if uploaded_bss else None
+sales_bytes = uploaded_sales.getvalue() if uploaded_sales else None
+cust_name = uploaded_file.name
+bss_name = uploaded_bss.name if uploaded_bss else ""
+sales_name = uploaded_sales.name if uploaded_sales else ""
+
+_h = hashlib.md5()
+for _part in (cust_name.encode(), cust_bytes, bss_name.encode(), bss_bytes or b"",
+              sales_name.encode(), sales_bytes or b""):
+    _h.update(_part)
+    _h.update(b"|")
+token = _h.hexdigest()
+
+res = run_pipeline(token, cust_bytes, cust_name, bss_bytes, bss_name, sales_bytes, sales_name)
+
+if res["fatal"]:
+    st.error(res["fatal"])
+    st.stop()
+
+for w in res["warnings"]:
+    st.error(w)
+
+df = res["df"]
+mobile_col_f1 = res["mobile_col_f1"]
+invested_col_f1 = res["invested_col_f1"]
+stats_bss, stats_sales = res["stats_bss"], res["stats_sales"]
+resolved_bss, resolved_sales = res["resolved_bss"], res["resolved_sales"]
 total_resolved = resolved_bss + resolved_sales
 
-df["Template"] = df["Language"].apply(lambda lang: "Tamil" if lang == "Tamil" else "English")
+st.markdown('<div class="section-title"><span class="step-badge">2</span>Results</div>',
+            unsafe_allow_html=True)
 
-blank_district_mask = df["_District"].fillna("").astype(str).str.strip() == ""
-df.loc[blank_district_mask, "_District"] = (
-    df.loc[blank_district_mask, "Final Address"].apply(infer_district_from_address)
-)
+if not mobile_col_f1:
+    st.warning("⚠️ No mobile column found in the Customer Report — mobile fallback skipped.")
+else:
+    st.caption(f"📱 Mobile column in Customer Report: `{mobile_col_f1}` — "
+               f"{res['valid_mobiles']:,} valid 10-digit mobiles after normalization")
+
+with st.expander("🔎 Mobile Normalization Check (verify +91 → 10 digit)", expanded=False):
+    if mobile_col_f1:
+        st.dataframe(res["sample"], hide_index=True, width="stretch")
+    else:
+        st.info("No mobile column detected in Customer Report.")
 
 st.success(f"✅ State, District, Language & Template added "
            f"(Bss resolved {resolved_bss:,} • Sales resolved {resolved_sales:,} • "
@@ -972,11 +1200,15 @@ with tab_overview:
 
     ca, cb = st.columns(2)
     with ca:
-        st.markdown("**Language Distribution**")
-        st.bar_chart(df["Language"].value_counts())
+        with st.container(border=True):
+            st.markdown("**Language Distribution**")
+            st.bar_chart(df["Language"].value_counts())
     with cb:
-        st.markdown("**Top 10 States**")
-        st.bar_chart(df["State"].value_counts().head(10))
+        with st.container(border=True):
+            st.markdown("**Top 10 States**")
+            st.bar_chart(df["State"].value_counts().head(10))
+
+MAX_PREVIEW_ROWS = 2000  # keeps the browser fast on very large files (export is never limited)
 
 with tab_results:
     st.subheader("Customer Result")
@@ -988,7 +1220,7 @@ with tab_results:
     with fc3:
         language_filter = st.selectbox("Filter by language", ["All"] + sorted(df["Language"].unique().tolist()))
 
-    fdf = df.copy()
+    fdf = df
     if search_term:
         fdf = fdf[fdf["Final Address"].str.contains(search_term, case=False, na=False)]
     if state_filter != "All":
@@ -999,11 +1231,13 @@ with tab_results:
     display_cols = [c for c in ["_Mobile_Key", "Permanent Address", "Temporary Address",
                                 "Nearby Showroom", "Final Address", "State", "_District",
                                 "Language", "Template", "_MatchedFrom"] if c in fdf.columns]
-    st.caption(f"Showing {len(fdf):,} of {total_customers:,} customers")
+    st.caption(f"Showing {min(len(fdf), MAX_PREVIEW_ROWS):,} of {len(fdf):,} matching rows "
+               f"({total_customers:,} customers total)"
+               + (" — preview is capped for speed; exports contain every row." if len(fdf) > MAX_PREVIEW_ROWS else ""))
     st.dataframe(
-        fdf[display_cols].rename(columns={"_Mobile_Key": "Mobileno",
-                                          "_District": "District",
-                                          "_MatchedFrom": "Matched From"}),
+        fdf[display_cols].head(MAX_PREVIEW_ROWS).rename(columns={"_Mobile_Key": "Mobileno",
+                                                                  "_District": "District",
+                                                                  "_MatchedFrom": "Matched From"}),
         width="stretch", hide_index=True
     )
 
@@ -1034,15 +1268,12 @@ with tab_download:
                "(Tamil customers → Tamil file; all other languages → English file). "
                "Download all files at once in a ZIP, or download individually below.")
 
-    # 🚀 Build all 10 base reports once
-    all_sheets_dict, dropped_count = build_all_sheets_cached(
-        df, bss_df, sales_df, mobile_col_f1, invested_col_f1, mobile_set_sales, mobile_set_bss
-    )
+    exp = build_exports(token, res)
 
-    if dropped_count > 0:
-        st.info(f"🧹 **Clean-up notice:** {dropped_count:,} rows with blank/empty phone numbers "
+    if exp["dropped_count"] > 0:
+        st.info(f"🧹 **Clean-up notice:** {exp['dropped_count']:,} rows with blank/empty phone numbers "
                 f"were automatically removed from the final report.")
-    
+
     if invested_col_f1:
         st.caption(f"Sheets 2, 7, 8, 9, 10 use Customer Report column **`{invested_col_f1}`** — rows where value is `0` or blank are treated as *No Invested*.")
     else:
@@ -1054,115 +1285,70 @@ with tab_download:
 
     st.divider()
 
-    # ---- Summary metrics for the 20 files ----
+    # ---- Summary ----
     st.markdown("### 📊 Export Summary (20 Files)")
-    summary_rows = []
-    for _, full_title in SHEET_META:
-        data = all_sheets_dict[full_title]
-        tamil_data = data[data["Language"] == "Tamil"]
-        english_data = data[data["Language"] != "Tamil"]
-        summary_rows.append({
-            "Report": full_title,
-            "Tamil Rows": len(tamil_data),
-            "English Rows": len(english_data),
-            "Total Rows": len(data),
-        })
-    st.dataframe(pd.DataFrame(summary_rows), width="stretch", hide_index=True)
+    st.dataframe(exp["summary"], width="stretch", hide_index=True)
 
     st.divider()
 
-    # ---- Download ALL 20 files as a single ZIP ----
+    # ---- ZIP ----
     st.markdown("### 📦 Download All 20 Files in One ZIP")
     st.caption("The ZIP contains every report split by language: "
                "`<Report> - Tamil.xlsx` and `<Report> - English.xlsx`.")
 
-    zip_all_out = BytesIO()
-    total_files_in_zip = 0
-    with zipfile.ZipFile(zip_all_out, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-        for _, full_title in SHEET_META:
-            data = all_sheets_dict[full_title]
-            for lang_label, mask in [("Tamil", data["Language"] == "Tamil"),
-                                     ("English", data["Language"] != "Tamil")]:
-                subset = data[mask].reset_index(drop=True)
-                if len(subset) == 0:
-                    continue
-                buf = BytesIO()
-                with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-                    subset.to_excel(writer, sheet_name="Sheet1", index=False, startrow=0)
-                zip_file.writestr(f"{full_title} - {lang_label}.xlsx", buf.getvalue())
-                total_files_in_zip += 1
-
     st.download_button(
-        label=f"📦 Download All {total_files_in_zip} Files (.zip)",
-        data=zip_all_out.getvalue(),
+        label=f"📦 Download All {exp['total_files']} Files (.zip)",
+        data=exp["zip_bytes"],
         file_name="All_Customer_Reports_Tamil_And_English.zip",
         mime="application/zip",
         key="dl_all_zip",
         width="stretch",
+        type="primary",
     )
-    st.caption(f"ZIP contains **{total_files_in_zip}** Excel files "
+    st.caption(f"ZIP contains **{exp['total_files']}** Excel files "
                f"(empty language subsets are skipped).")
 
     st.divider()
 
-    # ---- 20 individual download tabs ----
+    # ---- Individual files ----
     st.markdown("### 📥 Download Individual Files")
-    
+
     tabs = st.tabs([meta[1] for meta in SHEET_META])
+    XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
     for tab, (_, full_title) in zip(tabs, SHEET_META):
-        data = all_sheets_dict[full_title]
-        tamil_data = data[data["Language"] == "Tamil"].reset_index(drop=True)
-        english_data = data[data["Language"] != "Tamil"].reset_index(drop=True)
+        tamil_data, english_data = exp["splits"][full_title]
+        total_rows = len(tamil_data) + len(english_data)
 
         with tab:
-            st.markdown(f"**{full_title}** — {len(data):,} total rows "
+            st.markdown(f"**{full_title}** — {total_rows:,} total rows "
                         f"({len(tamil_data):,} Tamil • {len(english_data):,} English)")
 
-            st.markdown(f"#### 🇮🇳 `{full_title} - Tamil.xlsx`")
-            if len(tamil_data) > 0:
-                tamil_buf = BytesIO()
-                with pd.ExcelWriter(tamil_buf, engine="openpyxl") as writer:
-                    tamil_data.to_excel(writer, sheet_name="Sheet1", index=False, startrow=0)
-                st.download_button(
-                    label=f"📥 Download {full_title} - Tamil.xlsx ({len(tamil_data):,} rows)",
-                    data=tamil_buf.getvalue(),
-                    file_name=f"{full_title} - Tamil.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key=f"dl_tamil_{full_title}",
-                    width="stretch",
-                )
-                with st.expander("Preview Tamil", expanded=False):
-                    st.dataframe(tamil_data.head(20), hide_index=True, width="stretch")
-            else:
-                st.info("No Tamil rows in this report.")
-                st.button(
-                    f"📥 Download {full_title} - Tamil.xlsx (0 rows)",
-                    disabled=True,
-                    key=f"dl_tamil_empty_{full_title}",
-                    width="stretch",
-                )
+            col_t, col_e = st.columns(2)
 
-            st.markdown(f"#### 🌍 `{full_title} - English.xlsx`")
-            if len(english_data) > 0:
-                english_buf = BytesIO()
-                with pd.ExcelWriter(english_buf, engine="openpyxl") as writer:
-                    english_data.to_excel(writer, sheet_name="Sheet1", index=False, startrow=0)
-                st.download_button(
-                    label=f"📥 Download {full_title} - English.xlsx ({len(english_data):,} rows)",
-                    data=english_buf.getvalue(),
-                    file_name=f"{full_title} - English.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key=f"dl_english_{full_title}",
-                    width="stretch",
-                )
-                with st.expander("Preview English", expanded=False):
-                    st.dataframe(english_data.head(20), hide_index=True, width="stretch")
-            else:
-                st.info("No English rows in this report.")
-                st.button(
-                    f"📥 Download {full_title} - English.xlsx (0 rows)",
-                    disabled=True,
-                    key=f"dl_english_empty_{full_title}",
-                    width="stretch",
-                )
+            for col, label, icon, subset in (
+                (col_t, "Tamil", "🇮🇳", tamil_data),
+                (col_e, "English", "🌍", english_data),
+            ):
+                with col:
+                    with st.container(border=True):
+                        st.markdown(f"#### {icon} `{full_title} - {label}.xlsx`")
+                        if len(subset) > 0:
+                            st.download_button(
+                                label=f"📥 Download {label}.xlsx ({len(subset):,} rows)",
+                                data=exp["files"][(full_title, label)],
+                                file_name=f"{full_title} - {label}.xlsx",
+                                mime=XLSX_MIME,
+                                key=f"dl_{label.lower()}_{full_title}",
+                                width="stretch",
+                            )
+                            with st.expander(f"Preview {label}", expanded=False):
+                                st.dataframe(subset.head(20), hide_index=True, width="stretch")
+                        else:
+                            st.info(f"No {label} rows in this report.")
+                            st.button(
+                                f"📥 Download {label}.xlsx (0 rows)",
+                                disabled=True,
+                                key=f"dl_{label.lower()}_empty_{full_title}",
+                                width="stretch",
+                            )
