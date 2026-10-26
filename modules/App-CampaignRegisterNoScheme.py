@@ -498,6 +498,13 @@ def find_district_col(columns): return _find_col(columns, DISTRICT_CANDIDATE_COL
 def find_language_col(columns): return _find_col(columns, LANGUAGE_CANDIDATE_COLS)
 def find_invested_col(columns): return _find_col(columns, INVESTED_CANDIDATE_COLS)
 
+DATE_CANDIDATE_COLS = [
+    "registered date", "registration date", "reg date", "reg. date", "created date",
+    "created on", "created at", "joined date", "join date", "joining date",
+    "registered on", "date of registration", "date",
+]
+def find_date_col(columns):     return _find_col(columns, DATE_CANDIDATE_COLS)
+
 
 # -----------------------------------
 # 🔧 REFERENCE-BASED PHONE CLEANING
@@ -849,6 +856,15 @@ def _read_df(name, data):
     return pd.read_csv(BytesIO(data), dtype=str)
 
 
+@st.cache_resource(show_spinner=False)
+def parse_date_column(token, col, dayfirst, _series):
+    """Parse a text column to datetimes (unparseable → NaT). Cached per upload/column."""
+    try:
+        return pd.to_datetime(_series, errors="coerce", dayfirst=dayfirst, format="mixed")
+    except (TypeError, ValueError):
+        return pd.to_datetime(_series, errors="coerce", dayfirst=dayfirst)
+
+
 # -----------------------------------
 # 🚀 FULL PIPELINE — runs ONCE per upload, then served from cache
 # (filters / tabs / searches no longer re-run any heavy work)
@@ -968,9 +984,9 @@ def _to_xlsx_bytes(frame):
 
 
 @st.cache_resource(show_spinner="📦 Building 20 Excel files & ZIP (runs once per upload)...")
-def build_exports(token, _res):
+def build_exports(token, _res, _df):
     sheets, dropped_count = build_all_sheets(
-        _res["df"], _res["bss_df"], _res["sales_df"], _res["mobile_col_f1"],
+        _df, _res["bss_df"], _res["sales_df"], _res["mobile_col_f1"],
         _res["invested_col_f1"], _res["mobile_set_sales"], _res["mobile_set_bss"],
     )
 
@@ -1094,14 +1110,77 @@ if res["fatal"]:
 for w in res["warnings"]:
     st.error(w)
 
-df = res["df"]
+df_full = res["df"]
+date_sig = "nofilter"
+date_label = ""
+
+# -----------------------------------
+# 📅 Date filter (applies to results AND exports)
+# -----------------------------------
+
+st.markdown('<div class="section-title"><span class="step-badge">2</span>Date Filter</div>',
+            unsafe_allow_html=True)
+df = df_full
+with st.container(border=True):
+    use_date_filter = st.checkbox("📅 Enable date filter on Customer Report", value=False,
+                                  key="use_date_filter",
+                                  help="Filters the customers shown below and every exported report.")
+    if use_date_filter:
+        _internal = ("Final Address", "State", "Language", "Template")
+        date_cols = [c for c in df_full.columns if not str(c).startswith("_") and c not in _internal]
+        _auto = find_date_col(date_cols)
+        _idx = date_cols.index(_auto) if _auto in date_cols else 0
+
+        dc1, dc2, dc3 = st.columns([1.2, 1, 1.6])
+        with dc1:
+            date_col_sel = st.selectbox("Date column", date_cols, index=_idx, key="date_col_sel")
+        with dc2:
+            dayfirst = st.checkbox("Day first (DD/MM/YYYY)", value=True, key="date_dayfirst")
+            include_blank = st.checkbox("Include rows with no / invalid date", value=False,
+                                        key="date_include_blank")
+
+        parsed = parse_date_column(token, date_col_sel, dayfirst, df_full[date_col_sel])
+        valid_dates = parsed.notna()
+
+        if not valid_dates.any():
+            st.warning(f"⚠️ No valid dates found in `{date_col_sel}`. Pick another column "
+                       f"or toggle *Day first*. Showing all customers.")
+        else:
+            dmin = parsed[valid_dates].min().date()
+            dmax = parsed[valid_dates].max().date()
+            with dc3:
+                picked = st.date_input(
+                    "Date range", value=(dmin, dmax), min_value=dmin, max_value=dmax,
+                    format="DD/MM/YYYY", key=f"date_range_{date_col_sel}_{dayfirst}",
+                )
+            if not isinstance(picked, (tuple, list)) or len(picked) != 2:
+                st.info("📅 Pick the **end date** to apply the filter.")
+                st.stop()
+
+            start_d, end_d = picked
+            norm = parsed.dt.normalize()
+            mask = (norm >= pd.Timestamp(start_d)) & (norm <= pd.Timestamp(end_d))
+            if include_blank:
+                mask = mask | ~valid_dates
+            df = df_full[mask]
+
+            date_label = f"{date_col_sel}: {start_d:%d-%m-%Y} → {end_d:%d-%m-%Y}"
+            date_sig = f"{date_col_sel}|{dayfirst}|{start_d}|{end_d}|{include_blank}"
+            st.caption(f"✅ **{len(df):,}** of {len(df_full):,} customers fall in the selected range "
+                       f"· {int((~valid_dates).sum()):,} rows have no/invalid date "
+                       f"({'included' if include_blank else 'excluded'}).")
+
+            if df.empty:
+                st.warning("No customers in this date range. Widen the range to continue.")
+                st.stop()
+
 mobile_col_f1 = res["mobile_col_f1"]
 invested_col_f1 = res["invested_col_f1"]
 stats_bss, stats_sales = res["stats_bss"], res["stats_sales"]
 resolved_bss, resolved_sales = res["resolved_bss"], res["resolved_sales"]
 total_resolved = resolved_bss + resolved_sales
 
-st.markdown('<div class="section-title"><span class="step-badge">2</span>Results</div>',
+st.markdown('<div class="section-title"><span class="step-badge">3</span>Results</div>',
             unsafe_allow_html=True)
 
 if not mobile_col_f1:
@@ -1268,7 +1347,12 @@ with tab_download:
                "(Tamil customers → Tamil file; all other languages → English file). "
                "Download all files at once in a ZIP, or download individually below.")
 
-    exp = build_exports(token, res)
+    exp = build_exports(token + "|" + date_sig, res, df)
+
+    if date_label:
+        st.success(f"📅 **Date filter applied to all exports** — {date_label} "
+                   f"({len(df):,} of {len(df_full):,} customers). Sheets 3–10 are matched "
+                   f"against these filtered customers.")
 
     if exp["dropped_count"] > 0:
         st.info(f"🧹 **Clean-up notice:** {exp['dropped_count']:,} rows with blank/empty phone numbers "
@@ -1299,7 +1383,8 @@ with tab_download:
     st.download_button(
         label=f"📦 Download All {exp['total_files']} Files (.zip)",
         data=exp["zip_bytes"],
-        file_name="All_Customer_Reports_Tamil_And_English.zip",
+        file_name=("All_Customer_Reports_Tamil_And_English_filtered.zip" if date_label
+                   else "All_Customer_Reports_Tamil_And_English.zip"),
         mime="application/zip",
         key="dl_all_zip",
         width="stretch",
