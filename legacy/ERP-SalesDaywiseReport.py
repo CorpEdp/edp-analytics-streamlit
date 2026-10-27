@@ -42,7 +42,7 @@ BRANCH_CODE_TO_NAME = {
     "TCY": "Trichy",
     "TVL": "Tirunelveli",
     "VNR": "Virudhunagar",
-    "TJ" : ""
+    "TJ" : "TANJORE"
 }
 
 _FULL_NAME_TO_CODE = {
