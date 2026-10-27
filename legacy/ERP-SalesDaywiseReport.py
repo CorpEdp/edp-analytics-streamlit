@@ -69,6 +69,7 @@ BRANCH_DISPLAY_NAMES.update({
     "TRICHY": "Trichy",
     "TIRUNELVELI": "Tirunelveli",
     "VIRUDHUNAGAR": "Virudhunagar",
+    "TANJORE": "TANJORE",
 })
 
 
