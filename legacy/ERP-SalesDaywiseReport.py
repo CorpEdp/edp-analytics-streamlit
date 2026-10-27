@@ -42,7 +42,7 @@ BRANCH_CODE_TO_NAME = {
     "TCY": "Trichy",
     "TVL": "Tirunelveli",
     "VNR": "Virudhunagar",
-    "TJ": "TAN",
+    "TJ": "TANJORE",
 }
 
 _FULL_NAME_TO_CODE = {
@@ -53,6 +53,7 @@ _FULL_NAME_TO_CODE.update({
     "MADURAI": "MDU",
     "ANNA NAGAR": "AN",
     "VIRUDHURNGAR": "VNR",
+    "TANJORE": "TJ",
 })
 
 BRANCH_DISPLAY_NAMES = dict(BRANCH_CODE_TO_NAME)
