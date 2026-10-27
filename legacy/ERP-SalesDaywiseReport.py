@@ -42,7 +42,6 @@ BRANCH_CODE_TO_NAME = {
     "TCY": "Trichy",
     "TVL": "Tirunelveli",
     "VNR": "Virudhunagar",
-    "TJ": "TAN",
 }
 
 _FULL_NAME_TO_CODE = {
