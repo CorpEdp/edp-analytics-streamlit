@@ -363,6 +363,22 @@ def auto_detect_columns(df):
     if diamond_amount_col is None:
         diamond_amount_col = find(include_any=["stone", "amount", "diamond", "amt"])
 
+    # Doc No column detection
+    doc_no_col = find(
+        exact="doc no",
+        include_any=[
+            "doc no",
+            "doc.no",
+            "doc_no",
+            "docno",
+            "document no",
+            "document number",
+            "doc number",
+            "bill no",
+            "invoice no",
+        ]
+    )
+
     fallback = cols[0] if cols else None
 
     return {
@@ -373,6 +389,7 @@ def auto_detect_columns(df):
         "gross_wt": gross_wt_col or fallback,
         "diamond_wt": diamond_wt_col or fallback,
         "diamond_amount": diamond_amount_col or None,
+        "doc_no": doc_no_col or None,
     }
 
 
@@ -456,7 +473,8 @@ def build_single_sheet_report(
     diamond_amount_col,
     branch_col,
     label_col,
-    item_col=None
+    item_col=None,
+    doc_no_col=None
 ):
 
     items = ["Gold", "Silver", "Diamond", "Platinum"]
@@ -1486,6 +1504,297 @@ def build_single_sheet_report(
     ws3.freeze_panes = ws3.cell(row=2, column=1)
 
     # ========================================================
+    # SHEET 4 - DOC NO COUNT
+    # ========================================================
+
+    if doc_no_col and doc_no_col in df_filtered.columns:
+
+        ws4 = wb.create_sheet("Doc No Count")
+
+        doc_df = df_filtered.copy()
+        doc_df["Doc_Key"] = (
+            doc_df[doc_no_col]
+            .astype(str)
+            .str.strip()
+        )
+        doc_df["Doc_Key"] = doc_df["Doc_Key"].replace(
+            ["", "nan", "None", "NaN", "null", "NaT"],
+            pd.NA
+        )
+        doc_df = doc_df[doc_df["Doc_Key"].notna()].copy()
+
+        doc_branches = branches
+
+        doc_cols_per_branch = 3
+        doc_total_cols = 2 + len(doc_branches) * doc_cols_per_branch + 1
+
+        doc_count_fill = PatternFill(
+            start_color="E2EFDA",
+            end_color="E2EFDA",
+            fill_type="solid"
+        )
+        doc_pct_fill = PatternFill(
+            start_color="E6E6FA",
+            end_color="E6E6FA",
+            fill_type="solid"
+        )
+        doc_all_fill = PatternFill(
+            start_color="FFEB9C",
+            end_color="FFEB9C",
+            fill_type="solid"
+        )
+
+        def write_doc_headers(row, date_label="", day_label=""):
+
+            cell = ws4.cell(row=row, column=1, value=date_label)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center
+            cell.border = border
+
+            cell = ws4.cell(row=row, column=2, value=day_label)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center
+            cell.border = border
+
+            col = 3
+
+            for _ in doc_branches:
+
+                cell = ws4.cell(row=row, column=col, value="Branch")
+                cell.font = Font(bold=True, size=10, color="FFFFFF")
+                cell.alignment = center
+                cell.border = border
+                cell.fill = PatternFill(
+                    start_color="4472C4",
+                    end_color="4472C4",
+                    fill_type="solid"
+                )
+                col += 1
+
+                cell = ws4.cell(row=row, column=col, value="Doc Count")
+                cell.font = header_font
+                cell.alignment = center
+                cell.border = border
+                cell.fill = doc_count_fill
+                col += 1
+
+                cell = ws4.cell(row=row, column=col, value="Doc %")
+                cell.font = header_font
+                cell.alignment = center
+                cell.border = border
+                cell.fill = doc_pct_fill
+                col += 1
+
+            cell = ws4.cell(row=row, column=col, value="Total Docs")
+            cell.font = header_font
+            cell.alignment = center
+            cell.border = border
+            cell.fill = doc_all_fill
+
+        def doc_totals(data):
+
+            counts = {}
+
+            for branch in doc_branches:
+                branch_data = data[data["Branch_Code"] == branch]
+                counts[branch] = int(branch_data["Doc_Key"].nunique())
+
+            grand = sum(counts.values())
+
+            totals = {}
+            for branch in doc_branches:
+                totals[branch] = {
+                    "count": counts[branch],
+                    "pct": counts[branch] / grand * 100 if grand > 0 else 0.0,
+                }
+
+            return totals, grand
+
+        def write_doc_row(row, totals, grand_count, label, day_name="", grand=False):
+
+            is_total_row = (label == "📌 TOTAL")
+
+            cell = ws4.cell(row=row, column=1, value=label)
+            cell.alignment = center
+            cell.border = thick_border if grand else border
+            if grand:
+                cell.font = grand_total_font
+                cell.fill = grand_total_fill
+            elif is_total_row:
+                cell.font = total_font
+                cell.fill = total_fill
+
+            cell = ws4.cell(row=row, column=2, value=day_name)
+            cell.alignment = center
+            cell.border = thick_border if grand else border
+            if grand:
+                cell.font = grand_total_font
+                cell.fill = grand_total_fill
+            elif is_total_row:
+                cell.font = total_font
+                cell.fill = total_fill
+
+            col = 3
+
+            for branch in doc_branches:
+
+                data = totals.get(branch, {"count": 0, "pct": 0.0})
+
+                cell = ws4.cell(
+                    row=row,
+                    column=col,
+                    value=get_branch_display_name(branch)
+                )
+                cell.alignment = center
+                cell.border = thick_border if grand else border
+                cell.fill = PatternFill(
+                    start_color="E2EFDA" if not grand else "C00000",
+                    end_color="E2EFDA" if not grand else "C00000",
+                    fill_type="solid"
+                )
+                cell.font = Font(
+                    bold=True,
+                    size=9,
+                    color="000000" if not grand else "FFFFFF"
+                )
+                col += 1
+
+                cell = ws4.cell(row=row, column=col, value=int(data["count"]))
+                cell.alignment = right
+                cell.border = thick_border if grand else border
+                cell.number_format = '#,##0'
+                if grand:
+                    cell.font = grand_total_font
+                    cell.fill = grand_total_fill
+                elif is_total_row:
+                    cell.font = total_font
+                    cell.fill = total_fill
+                else:
+                    cell.fill = doc_count_fill
+                col += 1
+
+                pct_value = 100.0 if grand else data["pct"]
+                cell = ws4.cell(row=row, column=col, value=round(pct_value, 1))
+                cell.alignment = center
+                cell.border = thick_border if grand else border
+                cell.number_format = '0.0"%"'
+                if grand:
+                    cell.font = grand_total_font
+                    cell.fill = grand_total_fill
+                elif is_total_row:
+                    cell.font = total_font
+                    cell.fill = total_fill
+                else:
+                    cell.fill = doc_pct_fill
+                col += 1
+
+            cell = ws4.cell(row=row, column=col, value=int(grand_count))
+            cell.alignment = right
+            cell.border = thick_border if grand else border
+            cell.number_format = '#,##0'
+            if grand:
+                cell.font = grand_total_font
+                cell.fill = grand_total_fill
+            elif is_total_row:
+                cell.font = total_font
+                cell.fill = total_fill
+            else:
+                cell.fill = doc_all_fill
+
+        row4 = 1
+        ws4.merge_cells(
+            start_row=row4,
+            start_column=1,
+            end_row=row4,
+            end_column=doc_total_cols
+        )
+
+        doc_title = "🧾 DOC NO COUNT REPORT – CUMULATIVE & DAILY"
+        if date_range_str:
+            doc_title += f"   {date_range_str}"
+
+        title = ws4.cell(row=row4, column=1, value=doc_title)
+        title.font = title_font
+        title.fill = title_fill
+        title.alignment = center
+
+        row4 += 2
+        write_doc_headers(row4)
+        row4 += 1
+
+        cumulative_doc_totals, cumulative_doc_grand = doc_totals(doc_df)
+        write_doc_row(
+            row4,
+            cumulative_doc_totals,
+            cumulative_doc_grand,
+            "📌 TOTAL"
+        )
+        row4 += 2
+
+        ws4.merge_cells(
+            start_row=row4,
+            start_column=1,
+            end_row=row4,
+            end_column=doc_total_cols
+        )
+        section = ws4.cell(
+            row=row4,
+            column=1,
+            value="📅 DOC NO COUNT DAY WISE REPORT"
+        )
+        section.font = section_font
+        section.fill = section_fill
+        section.alignment = center
+
+        row4 += 2
+        write_doc_headers(row4, "📅 Date", "📅 Day Name")
+        doc_date_header_row = row4
+        row4 += 1
+
+        for date_value in sorted(df_filtered["Date"].unique()):
+
+            day_data = doc_df[doc_df["Date"] == date_value]
+            day_doc_totals, day_doc_grand = doc_totals(day_data)
+
+            date_label = (
+                date_value.strftime("%d-%b-%Y")
+                if hasattr(date_value, "strftime")
+                else str(date_value)
+            )
+            day_name_label = (
+                date_value.strftime("%A")
+                if hasattr(date_value, "strftime")
+                else ""
+            )
+
+            write_doc_row(
+                row4,
+                day_doc_totals,
+                day_doc_grand,
+                date_label,
+                day_name_label
+            )
+            row4 += 1
+
+        row4 += 1
+        write_doc_row(
+            row4,
+            cumulative_doc_totals,
+            cumulative_doc_grand,
+            "🔴 GRAND TOTAL",
+            grand=True
+        )
+
+        ws4.column_dimensions["A"].width = 18
+        ws4.column_dimensions["B"].width = 15
+        for column in range(3, doc_total_cols + 1):
+            ws4.column_dimensions[get_column_letter(column)].width = 15
+
+        ws4.freeze_panes = ws4.cell(row=doc_date_header_row + 1, column=3)
+
+    # ========================================================
     # SAVE - return dict with bytes + date range info
     # ========================================================
 
@@ -1515,7 +1824,9 @@ def process_data_cached(
     diamond_wt_col,
     diamond_amount_col,
     item_col,
-    fill_blanks
+    fill_blanks,
+    doc_no_col=None,
+    month_filter="All"  # NEW
 ):
     return process_data(
         df,
@@ -1527,7 +1838,9 @@ def process_data_cached(
         diamond_wt_col,
         diamond_amount_col,
         item_col,
-        fill_blanks
+        fill_blanks,
+        doc_no_col,
+        month_filter  # NEW
     )
 
 
@@ -1541,7 +1854,9 @@ def process_data(
     diamond_wt_col,
     diamond_amount_col,
     item_col,
-    fill_blanks
+    fill_blanks,
+    doc_no_col=None,
+    month_filter="All"  # NEW
 ):
 
     # ========================================================
@@ -1599,6 +1914,28 @@ def process_data(
 
     after_dates = len(df_clean)
     st.info(f"📊 After date validation: {after_dates} rows")
+
+    # ========================================================
+    # MONTH FILTER (NEW)
+    # ========================================================
+
+    df_clean["Month"] = pd.to_datetime(df_clean["Date"]).dt.strftime("%b-%Y")
+
+    if month_filter and month_filter != "All":
+
+        df_clean = df_clean[df_clean["Month"] == month_filter].copy()
+
+        if len(df_clean) == 0:
+            raise ValueError(
+                f"No data found for the selected month: {month_filter}"
+            )
+
+        st.info(
+            f"📅 Month filter applied: {month_filter} "
+            f"({len(df_clean)} rows)"
+        )
+    else:
+        st.info("📅 Month filter: All months")
 
     # ========================================================
     # BRANCH
@@ -2056,7 +2393,8 @@ def process_data(
         diamond_amount_col,
         branch_col,
         label_col,
-        item_col
+        item_col,
+        doc_no_col
     )
 
     formatted_bytes = report_output["bytes"]
@@ -2113,6 +2451,8 @@ def process_data(
         "report_end_str": report_end_str,
 
         "total_amounts": total_amounts,
+
+        "month_filter": month_filter,  # NEW
     }
 
 
@@ -2142,6 +2482,7 @@ with st.sidebar:
         - **Gross Wt** - Gross weight in grams
         - **Diamond Weight Ct** - Diamond weight in carats
         - **Diamond Amount** - Separate diamond amount
+        - **Doc No** - Document / bill number (for Doc No Count sheet)
         """
     )
 
@@ -2415,6 +2756,63 @@ if uploaded_file is not None:
             diamond_amount_col = diamond_amount_col_selected
 
         # ====================================================
+        # DOC NO COLUMN
+        # ====================================================
+
+        st.markdown("#### 🧾 Doc No Column")
+
+        doc_no_options = ["None"] + cols_list
+
+        detected_doc_no = (
+            guess["doc_no"]
+            if guess["doc_no"] in cols_list
+            else "None"
+        )
+
+        doc_no_col_selected = st.selectbox(
+            "🧾 Doc No Column (for Doc No Count sheet)",
+            doc_no_options,
+            index=(
+                doc_no_options.index(detected_doc_no)
+                if detected_doc_no in doc_no_options
+                else 0
+            ),
+            help="Select the Doc No / Bill No column. Unique doc numbers are counted branch-wise and day-wise in a new sheet."
+        )
+
+        if doc_no_col_selected == "None":
+            doc_no_col = None
+        else:
+            doc_no_col = doc_no_col_selected
+
+        # ====================================================
+        # MONTH FILTER (NEW)
+        # ====================================================
+
+        st.markdown("#### 📅 Month Filter")
+
+        _parsed_dates = pd.to_datetime(
+            df[date_col],
+            errors="coerce"
+        ).dropna()
+
+        if len(_parsed_dates) > 0:
+            _month_periods = sorted(_parsed_dates.dt.to_period("M").unique())
+            month_options = ["All"] + [
+                p.strftime("%b-%Y") for p in _month_periods
+            ]
+        else:
+            month_options = ["All"]
+
+        month_filter = st.selectbox(
+            "📅 Select Month (All = full file)",
+            month_options,
+            index=0,
+            help="Choose All to include every date, or pick a single month. "
+                 "All sheets in the Excel report follow this selection."
+        )
+
+        # ====================================================
         # SHOW LOGIC
         # ====================================================
 
@@ -2438,6 +2836,10 @@ if uploaded_file is not None:
             🔹 **Platinum Wt** = Platinum Gross Wt
 
             📊 **Percentages are WEIGHT WISE** (branch weight ÷ total weight of that category × 100)
+
+            🧾 **Doc No Count Sheet** - Unique Doc No count branch-wise and day-wise
+
+            📅 **Month Filter** - All months or a single month for every sheet
 
             📋 **Raw Data Sheet** - All transaction details including:
             - Date
@@ -2473,7 +2875,9 @@ if uploaded_file is not None:
                         diamond_wt_col,
                         diamond_amount_col,
                         item_col,
-                        fill_blanks
+                        fill_blanks,
+                        doc_no_col,
+                        month_filter  # NEW
                     )
 
                     st.session_state["results"] = results
@@ -2503,6 +2907,11 @@ if uploaded_file is not None:
                     f"✅ Filled {results['filled_count']} "
                     "blank Branch Location cells"
                 )
+
+            # NEW: show which month the current results belong to
+            st.caption(
+                f"📅 Showing results for: {results.get('month_filter', 'All')}"
+            )
 
             # =================================================
             # SAMPLE DETECTION
@@ -2837,6 +3246,20 @@ else:
             **Silver** - Silver Wt (g), Silver Item Amt, Silver %
             **Diamond** - Diamond Gross Wt (g), Diamond Wt (Ct), Diamond Amt, Diamond Item Amt, Diamond %
             **Platinum** - Platinum Wt (g), Platinum Item Amt, Platinum %
+
+            ---
+
+            ### 🧾 Doc No Count Sheet
+
+            Unique **Doc No** count per branch, shown cumulative and day-wise
+            (same layout as the Sales Report).
+
+            ---
+
+            ### 📅 Month Filter
+
+            Choose **All** to include the whole file, or pick a single month
+            (e.g. Oct-2026). Every sheet in the Excel report follows the selection.
 
             ---
 
