@@ -105,6 +105,71 @@ def reindex_all_branches(df, ordered_branches, branch_col='Branch'):
 
 
 # ---------------------------------------------------------------------------
+# 2-Month Validity helpers
+# ---------------------------------------------------------------------------
+def compute_joining_month_offset(registered_date, joined_date):
+    """
+    Calendar-month offset between registration (month 1) and joining.
+
+    Returns:
+        0    -> same calendar month (valid)
+        1    -> one calendar month apart (valid)
+        >=2  -> two or more calendar months apart (invalid)
+        None -> cannot evaluate (missing/invalid date)
+    """
+    reg = pd.to_datetime(registered_date, errors='coerce')
+    joined = pd.to_datetime(joined_date, errors='coerce')
+    if pd.isna(reg) or pd.isna(joined):
+        return None
+    return (joined.year - reg.year) * 12 + (joined.month - reg.month)
+
+
+def apply_two_month_validity_filter(df):
+    """
+    Keep only records where joining falls within month 1 or month 2 of
+    registration, using calendar months (offset 0 or 1).
+
+    Records without a usable Registered Date or Joined Date are KEPT so that
+    pending / not-yet-joined rows are not silently dropped; their offset is
+    left blank for transparency.
+    """
+    if len(df) == 0:
+        return df.copy()
+
+    work = df.copy()
+
+    if 'Registered Date' not in work.columns or 'Joined Date' not in work.columns:
+        return work
+
+    work['Joining Month Offset'] = work.apply(
+        lambda r: compute_joining_month_offset(r['Registered Date'], r['Joined Date']),
+        axis=1,
+    )
+
+    offset = work['Joining Month Offset']
+    keep_mask = offset.isna() | (offset <= 1)
+    return work[keep_mask].copy()
+
+
+def apply_fixed_60_day_validity_filter(df):
+    """Keep records joined 0-60 days after registration; retain rows with missing dates."""
+    if len(df) == 0:
+        return df.copy()
+
+    work = df.copy()
+    if 'Registered Date' not in work.columns or 'Joined Date' not in work.columns:
+        return work
+
+    registered = pd.to_datetime(work['Registered Date'], errors='coerce')
+    joined = pd.to_datetime(work['Joined Date'], errors='coerce')
+    work['Joining Days Offset'] = (joined - registered).dt.days
+
+    offset = work['Joining Days Offset']
+    keep_mask = offset.isna() | offset.between(0, 60)
+    return work[keep_mask].copy()
+
+
+# ---------------------------------------------------------------------------
 # Core report generation logic
 # ---------------------------------------------------------------------------
 class ReportGenerator:
@@ -229,7 +294,10 @@ class ReportGenerator:
         report_copy['Is Duplicate'] = False
         report_copy['Duplicate Group'] = ''
 
-        has_passbook = report_copy['Scheme Passbook Number'].notna() & (report_copy['Scheme Passbook Number'] != '')
+        report_copy['Scheme Passbook Number'] = report_copy['Scheme Passbook Number'].apply(
+            lambda value: str(value).strip() if pd.notna(value) else ''
+        )
+        has_passbook = report_copy['Scheme Passbook Number'] != ''
 
         if not has_passbook.any():
             st.info("ℹ️ No records with Scheme Passbook Number found")
@@ -392,6 +460,25 @@ class ReportGenerator:
                     'amount': amount, 'scheme_name': row.get('Scheme', ''),
                     'doc_no': row.get('Doc No', ''), 'date': date, 'index': idx
                 })
+        used_bss_indices = set()
+
+        def find_unused_match(candidates, enrollment_amount):
+            unused = [match for match in candidates if match['index'] not in used_bss_indices]
+            if not unused:
+                return None
+            if pd.notna(enrollment_amount):
+                for match in unused:
+                    if pd.notna(match['amount']) and abs(match['amount'] - enrollment_amount) <= 0.01:
+                        return match
+            return unused[0]
+
+        def apply_match(idx, match):
+            used_bss_indices.add(match['index'])
+            final_report.loc[idx, 'Customer Payment'] = match['amount']
+            final_report.loc[idx, 'Scheme Name'] = match['scheme_name']
+            final_report.loc[idx, 'Scheme Passbook Number'] = str(match['doc_no']).strip()
+            final_report.loc[idx, 'True/False'] = True
+            final_report.loc[idx, 'Not Enrolled'] = False
 
         need_bss_matching = final_report[
             (final_report['Not Enrolled'] == True) &
@@ -419,50 +506,18 @@ class ReportGenerator:
             if pd.notna(updated_date):
                 exact_key = f"{customer_phone}_{updated_date}"
                 if exact_key in bss_lookup:
-                    for match in reversed(bss_lookup[exact_key]):
-                        if pd.notna(enrollment_amount) and pd.notna(match['amount']):
-                            if abs(match['amount'] - enrollment_amount) <= 0.01:
-                                final_report.loc[idx, 'Customer Payment'] = match['amount']
-                                final_report.loc[idx, 'Scheme Name'] = match['scheme_name']
-                                final_report.loc[idx, 'Scheme Passbook Number'] = match['doc_no']
-                                final_report.loc[idx, 'True/False'] = True
-                                final_report.loc[idx, 'Not Enrolled'] = False
-                                matched_count += 1
-                                matched = True
-                                break
-
-                    if not matched and len(bss_lookup[exact_key]) > 0:
-                        oldest_match = bss_lookup[exact_key][-1]
-                        final_report.loc[idx, 'Customer Payment'] = oldest_match['amount'] if pd.notna(oldest_match['amount']) else enrollment_amount
-                        final_report.loc[idx, 'Scheme Name'] = oldest_match['scheme_name']
-                        final_report.loc[idx, 'Scheme Passbook Number'] = oldest_match['doc_no']
-                        final_report.loc[idx, 'True/False'] = True
-                        final_report.loc[idx, 'Not Enrolled'] = False
+                    match = find_unused_match(bss_lookup[exact_key], enrollment_amount)
+                    if match is not None:
+                        apply_match(idx, match)
                         matched_count += 1
                         matched = True
 
             if not matched:
                 phone_key = customer_phone
                 if phone_key in bss_lookup:
-                    for match in reversed(bss_lookup[phone_key]):
-                        if pd.notna(enrollment_amount) and pd.notna(match['amount']):
-                            if abs(match['amount'] - enrollment_amount) <= 0.01:
-                                final_report.loc[idx, 'Customer Payment'] = match['amount']
-                                final_report.loc[idx, 'Scheme Name'] = match['scheme_name']
-                                final_report.loc[idx, 'Scheme Passbook Number'] = match['doc_no']
-                                final_report.loc[idx, 'True/False'] = True
-                                final_report.loc[idx, 'Not Enrolled'] = False
-                                matched_count += 1
-                                matched = True
-                                break
-
-                    if not matched and len(bss_lookup[phone_key]) > 0:
-                        oldest_match = bss_lookup[phone_key][-1]
-                        final_report.loc[idx, 'Customer Payment'] = oldest_match['amount'] if pd.notna(oldest_match['amount']) else enrollment_amount
-                        final_report.loc[idx, 'Scheme Name'] = oldest_match['scheme_name']
-                        final_report.loc[idx, 'Scheme Passbook Number'] = oldest_match['doc_no']
-                        final_report.loc[idx, 'True/False'] = True
-                        final_report.loc[idx, 'Not Enrolled'] = False
+                    match = find_unused_match(bss_lookup[phone_key], enrollment_amount)
+                    if match is not None:
+                        apply_match(idx, match)
                         matched_count += 1
                         matched = True
 
@@ -532,6 +587,17 @@ class ReportGenerator:
         else:
             st.error("❌ 'Referrer Phone' column not found in Referrals Report")
             return None
+
+        # ---- Preserve raw dates for the 2-Month Validity filter ----
+        if has_registered_date:
+            final_report['Registered Date'] = self.referrals_df['Registered Date'].apply(self.parse_date_flexible)
+        else:
+            final_report['Registered Date'] = pd.NaT
+
+        if has_joined_date:
+            final_report['Joined Date'] = self.referrals_df['Joined Date'].apply(self.parse_date_flexible)
+        else:
+            final_report['Joined Date'] = pd.NaT
 
         if 'Referral Code' in self.employees_df.columns and 'Employee Code' in self.employees_df.columns:
             emp_code_dict = {}
@@ -605,6 +671,8 @@ class ReportGenerator:
                 'index': idx
             })
 
+        used_transaction_indices = set()
+
         def get_transaction_details(row):
             customer_phone = row['Customer Phone']
             updated_date = row['Updated Date']
@@ -617,14 +685,20 @@ class ReportGenerator:
 
             if match_key in transaction_lookup:
                 transactions = transaction_lookup[match_key]
-                for trans in reversed(transactions):
-                    if pd.notna(enrollment_amount) and pd.notna(trans['saved_amount']):
-                        if abs(trans['saved_amount'] - enrollment_amount) <= 0.01:
-                            return trans['saved_amount'], trans['scheme_name'], trans['passbook_no']
-                oldest_trans = transactions[-1]
-                return oldest_trans['saved_amount'], oldest_trans['scheme_name'], oldest_trans['passbook_no']
-            else:
-                return np.nan, "", ""
+                unused_transactions = [
+                    trans for trans in transactions
+                    if trans['index'] not in used_transaction_indices
+                ]
+                if unused_transactions:
+                    if pd.notna(enrollment_amount):
+                        for trans in unused_transactions:
+                            if pd.notna(trans['saved_amount']) and abs(trans['saved_amount'] - enrollment_amount) <= 0.01:
+                                used_transaction_indices.add(trans['index'])
+                                return trans['saved_amount'], trans['scheme_name'], str(trans['passbook_no']).strip()
+                    trans = unused_transactions[0]
+                    used_transaction_indices.add(trans['index'])
+                    return trans['saved_amount'], trans['scheme_name'], str(trans['passbook_no']).strip()
+            return np.nan, "", ""
 
         transaction_details = final_report.apply(get_transaction_details, axis=1, result_type='expand')
         final_report['Customer Payment'] = transaction_details[0]
@@ -652,7 +726,8 @@ class ReportGenerator:
             'Updated Date', 'Customer Name', 'Customer Phone', 'Customer Enrollment Amount',
             'Status', 'Employee Name', 'Referral Code', 'Employee Phone', 'Employee Code',
             'Branch', 'Customer Payment', 'True/False', 'Scheme Name', 'Scheme Passbook Number',
-            'Category', 'Month', 'Not Enrolled'
+            'Category', 'Month', 'Not Enrolled',
+            'Registered Date', 'Joined Date',
         ]
 
         for col in final_columns:
@@ -661,10 +736,9 @@ class ReportGenerator:
 
         matched_count = final_report['Customer Payment'].notna().sum()
         not_enrolled_count = final_report['Not Enrolled'].sum()
-        report_count = len(final_report)
-        if report_count > 0:
-            st.info(f"📊 Final Match Results: {matched_count} out of {report_count} records matched ({matched_count/report_count*100:.2f}%)")
-            st.info(f"📊 Not Enrolled Customers: {not_enrolled_count} out of {report_count} ({not_enrolled_count/report_count*100:.2f}%)")
+        if len(final_report) > 0:
+            st.info(f"📊 Final Match Results: {matched_count} out of {len(final_report)} records matched ({matched_count/len(final_report)*100:.2f}%)")
+            st.info(f"📊 Not Enrolled Customers: {not_enrolled_count} out of {len(final_report)} ({not_enrolled_count/len(final_report)*100:.2f}%)")
 
         total_enrollment = final_report['Customer Enrollment Amount'].sum()
         total_payment = final_report['Customer Payment'].sum()
@@ -930,10 +1004,12 @@ class ReportGenerator:
         else:
             not_enrolled_customers = final_report[final_report['Not Enrolled'] == True].copy()
 
-        not_enrolled_customers = not_enrolled_customers[[
+        base_cols = [
             'Customer Name', 'Customer Phone', 'Employee Name', 'Employee Code',
             'Referral Code', 'Branch', 'Status', 'Customer Enrollment Amount', 'Updated Date'
-        ]]
+        ]
+        optional_cols = [c for c in ('Registered Date', 'Joined Date', 'Joining Month Offset') if c in not_enrolled_customers.columns]
+        not_enrolled_customers = not_enrolled_customers[base_cols + optional_cols]
 
         return branch_reg_pivot, not_enrolled_customers
 
@@ -1413,8 +1489,6 @@ def create_single_page_referral_excel(
         current_row += 1
 
     # Employee Grand Total
-    # Always calculate from the employee rows actually supplied to this export,
-    # so branch/date/employee filters are reflected in the downloaded report.
     if len(employee_df) > 0:
         employee_total = {
             "Branch": "Grand Total",
@@ -1465,7 +1539,7 @@ def create_single_page_referral_excel(
         return output
 
 
-def create_excel_report(final_report, generator, duplicates_df=None, duplicate_indices=None, start_date=None, end_date=None, selected_branches=None, selected_employee_names=None):
+def create_excel_report(final_report, generator, duplicates_df=None, duplicate_indices=None, start_date=None, end_date=None, selected_branches=None, selected_employee_names=None, two_month_validity_applied=False, fixed_60_day_validity_applied=False):
     """Create the master Excel file (all reports) with duplicate highlighting."""
     excel_buffer = io.BytesIO()
 
@@ -1521,6 +1595,14 @@ def create_excel_report(final_report, generator, duplicates_df=None, duplicate_i
         filter_info = {
             'Report Generated On': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
             'Date Filter Applied': [f"{start_date} to {end_date}" if start_date and end_date else "No Filter"],
+            '2-Month Validity Filter': [
+                'Applied (Registered → Joined, calendar months, offset ≤ 1)'
+                if two_month_validity_applied else 'Not Applied'
+            ],
+            'Fixed 60-Day Validity Filter': [
+                'Applied (Registered → Joined, 0-60 days)'
+                if fixed_60_day_validity_applied else 'Not Applied'
+            ],
             'Total Records in Report': [len(final_report)],
             'Total Enrollment Amount': [format_inr(final_report['Customer Enrollment Amount'].sum()) if 'Customer Enrollment Amount' in final_report.columns else "-"],
             'Total Payment Received': [format_inr(final_report['Customer Payment'].sum()) if 'Customer Payment' in final_report.columns else "-"],
@@ -1550,8 +1632,6 @@ def create_excel_report(final_report, generator, duplicates_df=None, duplicate_i
 
         branch_ref, employee_ref, referral_schemes = generator.generate_branch_employee_referral_report(final_report, start_date, end_date)
 
-        # Apply the SAME branch/employee filters used on screen to the
-        # "Download All Reports" workbook.
         if selected_branches is not None and len(selected_branches) > 0:
             branch_ref = branch_ref[
                 branch_ref['Branch'].isin(selected_branches) |
@@ -1563,7 +1643,6 @@ def create_excel_report(final_report, generator, duplicates_df=None, duplicate_i
             employee_ref = employee_ref[employee_ref['Employee Name'].isin(selected_employee_names)].copy()
 
         if len(branch_ref) > 0:
-            # Recompute branch grand total after branch filtering.
             branch_data = branch_ref[
                 branch_ref['Branch'].astype(str).str.strip().str.lower() != 'grand total'
             ].copy()
@@ -1667,7 +1746,7 @@ def render_dashboard(display_report):
             fig = px.line(daily, x='Updated Date', y='Customers', markers=True,
                           title=None, labels={'Updated Date': 'Date', 'Customers': 'Customers'})
             fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No dated records to chart.")
 
@@ -1678,7 +1757,7 @@ def render_dashboard(display_report):
             cat_counts.columns = ['Category', 'Count']
             fig = px.pie(cat_counts, names='Category', values='Count', hole=0.45)
             fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No category data available.")
 
@@ -1691,7 +1770,7 @@ def render_dashboard(display_report):
             branch_counts.columns = ['Branch', 'Customers']
             fig = px.bar(branch_counts, x='Customers', y='Branch', orientation='h')
             fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360, yaxis={'categoryorder': 'total ascending'})
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No branch data available.")
 
@@ -1701,7 +1780,7 @@ def render_dashboard(display_report):
             top_emp = non_dup.groupby('Employee Name')['Customer Enrollment Amount'].sum().sort_values(ascending=False).head(10).reset_index()
             fig = px.bar(top_emp, x='Customer Enrollment Amount', y='Employee Name', orientation='h')
             fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=360, yaxis={'categoryorder': 'total ascending'})
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No employee data available.")
 
@@ -1939,10 +2018,40 @@ def main():
                 st.session_state.filter_applied = False
                 st.session_state._last_week_applied = None
                 st.session_state._last_month_applied = None
+                st.session_state._two_month_validity = False
+                st.session_state._fixed_60_day_validity = False
+                st.session_state.pop('two_month_validity_toggle', None)
+                st.session_state.pop('fixed_60_day_validity_toggle', None)
                 st.rerun()
 
         filter_start_date = st.session_state.filter_start_date
         filter_end_date = st.session_state.filter_end_date
+
+        # ---- 2-Month Validity toggle ----
+        enable_two_month_validity = st.checkbox(
+            "✅ Apply 2-Month Validity (Registered Date → Joined Date)",
+            value=st.session_state.get('_two_month_validity', False),
+            key="two_month_validity_toggle",
+            help=(
+                "Registration month counts as Month 1. Keep a record only when the joining "
+                "month is the same as, or exactly one calendar month after, the registration "
+                "month. Two or more calendar months apart are excluded. "
+                "Calendar-month counting is used (not a fixed 60-day window)."
+            ),
+        )
+        st.session_state._two_month_validity = enable_two_month_validity
+
+        enable_fixed_60_day_validity = st.checkbox(
+            "✅ Apply Fixed 60-Day Validity (Registered Date → Joined Date)",
+            value=st.session_state.get('_fixed_60_day_validity', False),
+            key="fixed_60_day_validity_toggle",
+            help=(
+                "Keep a record when its joining date is from 0 through 60 days after "
+                "its registration date. Missing dates are kept. This is a fixed-day "
+                "window, independent of the calendar-month option above."
+            ),
+        )
+        st.session_state._fixed_60_day_validity = enable_fixed_60_day_validity
 
         if filter_start_date and filter_end_date:
             filtered_data = final_report[
@@ -1953,6 +2062,36 @@ def main():
         else:
             st.info("ℹ️ No date filter applied - showing all data")
             filtered_data = final_report.copy()
+
+        if enable_two_month_validity:
+            pre_count = len(filtered_data)
+            filtered_data = apply_two_month_validity_filter(filtered_data)
+            removed = pre_count - len(filtered_data)
+            st.success(
+                f"✅ 2-Month Validity filter applied (calendar months): "
+                f"{pre_count} → {len(filtered_data)} records "
+                f"({removed} out-of-validity rows removed)."
+            )
+            if 'Joining Month Offset' in filtered_data.columns:
+                st.caption(
+                    "Offset = (Joined Year − Registered Year) × 12 + (Joined Month − Registered Month). "
+                    "Kept offsets: 0 (same month) and 1 (next month). "
+                    "Blank offset = missing date, kept as-is."
+                )
+
+        if enable_fixed_60_day_validity:
+            pre_count = len(filtered_data)
+            filtered_data = apply_fixed_60_day_validity_filter(filtered_data)
+            removed = pre_count - len(filtered_data)
+            st.success(
+                f"✅ Fixed 60-Day Validity filter applied: "
+                f"{pre_count} → {len(filtered_data)} records "
+                f"({removed} rows outside 0-60 days removed)."
+            )
+            st.caption(
+                "Joining Days Offset = Joined Date − Registered Date. "
+                "Kept offsets: 0 through 60 days. Blank offset = missing date, kept as-is."
+            )
 
         st.markdown("---")
 
@@ -2183,6 +2322,8 @@ def main():
                                 'Total Payment Received': [format_currency(employee_records['Customer Payment'].sum()) if 'Customer Payment' in employee_records.columns else '₹0.00'],
                                 'Match Rate': [f"{(employee_records['True/False'].sum() / len(employee_records) * 100):.1f}%" if 'True/False' in employee_records.columns and len(employee_records) > 0 else '0%'],
                                 'Date Filter Applied': [f"{filter_start_date} to {filter_end_date}" if filter_start_date and filter_end_date else "No Filter"],
+                                '2-Month Validity Filter': ['Applied' if enable_two_month_validity else 'Not Applied'],
+                                'Fixed 60-Day Validity Filter': ['Applied' if enable_fixed_60_day_validity else 'Not Applied'],
                                 'Report Generated': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
                             }
                             pd.DataFrame([summary_data]).to_excel(writer, sheet_name='Summary', index=False)
@@ -2264,13 +2405,13 @@ def main():
                     fig = px.bar(top_branches, x='Branch', y='Total Customers')
                     fig.update_xaxes(categoryorder='array', categoryarray=top_branches['Branch'].tolist())
                     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
-                    st.plotly_chart(fig, width="stretch")
+                    st.plotly_chart(fig, use_container_width=True)
                 with col2:
                     st.markdown("#### Enrollment Rate by Branch")
                     fig = px.bar(top_branches, x='Branch', y='Enrollment Rate (%)')
                     fig.update_xaxes(categoryorder='array', categoryarray=top_branches['Branch'].tolist())
                     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=320)
-                    st.plotly_chart(fig, width="stretch")
+                    st.plotly_chart(fig, use_container_width=True)
 
                 st.markdown("#### 💾 Download This Report")
                 csv_buffer = io.StringIO()
@@ -2387,7 +2528,6 @@ def main():
                 st.markdown("#### 🔍 Filter by Branch (Applies to both sections below)")
                 all_branches = branch_df[branch_df['Branch'] != 'Grand Total']['Branch'].tolist()
 
-                # ---- FIX: no 'Select All' magic string; empty = all branches ----
                 selected_branches = st.multiselect(
                     "🏢 Select Branches (leave empty to include ALL branches)",
                     options=all_branches,
@@ -2401,7 +2541,6 @@ def main():
                 else:
                     st.caption(f"✅ Filtering to {len(selected_branches)} branch(es): {', '.join(selected_branches)}")
 
-                # ---- FILTER BRANCH DATA ----
                 branch_filter_mask = branch_df['Branch'].isin(selected_branches)
                 grand_total_mask = branch_df['Branch'] == 'Grand Total'
                 filtered_branch_df = branch_df[branch_filter_mask | grand_total_mask].copy()
@@ -2409,7 +2548,6 @@ def main():
                 branch_data_only = branch_df[branch_df['Branch'] != 'Grand Total'].copy()
                 branch_data_filtered = branch_data_only[branch_data_only['Branch'].isin(selected_branches)].copy()
 
-                # ---- RECOMPUTE GRAND TOTAL FOR FILTERED BRANCHES ----
                 if len(branch_data_filtered) > 0:
                     for col in branch_data_filtered.columns:
                         if 'Count' in col and col != 'Count %':
@@ -2494,7 +2632,6 @@ def main():
 
                     st.dataframe(display_emp_df, width='stretch')
 
-                    # Employee-wise Grand Total - respects BOTH branch and employee filters.
                     employee_grand_total = {
                         'Branch': 'Grand Total',
                         'Employee Code': '',
@@ -2540,9 +2677,6 @@ def main():
                     st.markdown("---")
                     st.markdown("#### 💾 Download Both Reports Together (Single Sheet)")
 
-                    # ==================================================
-                    # REBUILD EXPORT FRAMES FROM SCRATCH (guaranteed filter)
-                    # ==================================================
                     branch_export_df = branch_df[
                         branch_df['Branch'].isin(selected_branches)
                     ].copy()
@@ -2550,7 +2684,6 @@ def main():
                         branch_export_df['Branch'] != 'Grand Total'
                     ].copy()
 
-                    # Recompute Grand Total from filtered branches
                     gt_row = {'Branch': 'Grand Total', 'Count %': '100%', 'Amount %': '100%'}
                     for scheme in schemes:
                         cnt_col = f'{scheme} Count'
@@ -2580,14 +2713,12 @@ def main():
                     _remaining_export = [c for c in branch_export_df.columns if c not in _col_order_export]
                     branch_export_df = branch_export_df[_col_order_export + _remaining_export]
 
-                    # Employee export
                     employee_export_df = employee_df[employee_df['Branch'].isin(selected_branches)].copy()
                     if selected_employee_names:
                         employee_export_df = employee_export_df[
                             employee_export_df['Employee Name'].isin(selected_employee_names)
                         ].copy()
 
-                    # Debug expander
                     with st.expander("🔎 Confirm what will be exported (click to expand)", expanded=False):
                         st.write(f"**Selected branches ({len(selected_branches)}):** {', '.join(selected_branches)}")
                         st.write(f"**Branches in Branch table:** {sorted(branch_export_df[branch_export_df['Branch'] != 'Grand Total']['Branch'].unique().tolist())}")
@@ -2595,7 +2726,6 @@ def main():
                         if len(employee_export_df) > 0:
                             st.write(f"**Unique employees:** {employee_export_df['Employee Name'].nunique()}")
 
-                    # Build Excel
                     combined_excel = create_single_page_referral_excel(
                         branch_df=branch_export_df,
                         employee_df=employee_export_df,
@@ -2685,6 +2815,8 @@ def main():
                 filter_start_date, filter_end_date,
                 selected_branches=selected_branches if 'selected_branches' in locals() else None,
                 selected_employee_names=selected_employee_names if 'selected_employee_names' in locals() else None,
+                two_month_validity_applied=enable_two_month_validity,
+                fixed_60_day_validity_applied=enable_fixed_60_day_validity,
             )
 
             if filter_start_date and filter_end_date:
@@ -2692,10 +2824,18 @@ def main():
             else:
                 filename = f"complete_reports_all_data_{timestamp}.xlsx"
 
+            if enable_two_month_validity and enable_fixed_60_day_validity:
+                filename = filename.replace("complete_reports_", "complete_reports_2mo_60day_validity_")
+            elif enable_two_month_validity:
+                filename = filename.replace("complete_reports_", "complete_reports_2mo_validity_")
+            elif enable_fixed_60_day_validity:
+                filename = filename.replace("complete_reports_", "complete_reports_60day_validity_")
+
             all_report_signature = (
                 f"{filter_start_date}_{filter_end_date}_"
                 f"{abs(hash(tuple(selected_branches))) if 'selected_branches' in locals() else 'all'}_"
-                f"{abs(hash(tuple(selected_employee_names))) if 'selected_employee_names' in locals() else 'all'}"
+                f"{abs(hash(tuple(selected_employee_names))) if 'selected_employee_names' in locals() else 'all'}_"
+                f"{enable_two_month_validity}_{enable_fixed_60_day_validity}"
             )
             st.download_button(
                 label="📥 Download All Reports (Excel - Complete)",
@@ -2718,6 +2858,10 @@ def main():
                 st.info(f"💡 **Filter Applied:** {filter_start_date} to {filter_end_date}\n\nThe Excel file will include filtered data only.")
             else:
                 st.info("💡 **Tip:** Use the date filters above to generate reports for specific time periods.\n\nYou can filter by week, month, or custom date range.")
+            if enable_two_month_validity:
+                st.success("✅ **2-Month Validity filter is ON** — only records where joining falls within calendar month 1 or month 2 of registration are included.")
+            if enable_fixed_60_day_validity:
+                st.success("✅ **Fixed 60-Day Validity filter is ON** — only records joined within 0-60 days after registration are included.")
 
     except Exception as e:
         st.markdown(f'<div class="error-box">❌ Error: {str(e)}</div>', unsafe_allow_html=True)
