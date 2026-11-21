@@ -461,13 +461,15 @@ class ReportGenerator:
             date = row['Clean Date']
             amount = row['Online Amount']
             if phone and phone != "":
-                key = phone
-                if date:
-                    key = f"{phone}_{date}"
-                bss_lookup[key].append({
+                bss_lookup[phone].append({
                     'amount': amount, 'scheme_name': row.get('Scheme', ''),
                     'doc_no': row.get('Doc No', ''), 'date': date, 'index': idx
                 })
+                if date:
+                    bss_lookup[f"{phone}_{date}"].append({
+                        'amount': amount, 'scheme_name': row.get('Scheme', ''),
+                        'doc_no': row.get('Doc No', ''), 'date': date, 'index': idx
+                    })
         used_bss_indices = set()
 
         def find_unused_match(candidates, enrollment_amount):
@@ -484,12 +486,11 @@ class ReportGenerator:
             used_bss_indices.add(match['index'])
             final_report.loc[idx, 'Customer Payment'] = match['amount']
             final_report.loc[idx, 'Scheme Name'] = match['scheme_name']
-            final_report.loc[idx, 'Scheme Passbook Number'] = str(match['doc_no']).strip()
+            final_report.loc[idx, 'Scheme Passbook Number'] = self.clean_passbook_number(match['doc_no'])
             final_report.loc[idx, 'True/False'] = True
             final_report.loc[idx, 'Not Enrolled'] = False
 
         need_bss_matching = final_report[
-            (final_report['Not Enrolled'] == True) &
             (final_report['Status'].str.lower().str.contains('joined', na=False))
         ].copy()
 
