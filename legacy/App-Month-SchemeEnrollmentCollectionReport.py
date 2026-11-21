@@ -192,6 +192,52 @@ def get_week_number(date):
     return date.isocalendar().week
 
 
+def get_month_week_number(date):
+    """Return the fixed month-week number for a date."""
+
+    day = date.day
+
+    if day <= 7:
+        return 1
+    if day <= 14:
+        return 2
+    if day <= 21:
+        return 3
+    if day <= 28:
+        return 4
+    return 5
+
+
+def get_month_week_key(date):
+    """Return a chronological key for a fixed month-week period."""
+
+    return f"{date.year}-{date.month:02d}-W{get_month_week_number(date)}"
+
+
+def get_month_week_display(date):
+    """Return a user-friendly fixed month-week period with date range."""
+
+    week_number = get_month_week_number(date)
+    month_name = date.strftime("%b")
+
+    if week_number == 1:
+        start_day, end_day = 1, 7
+    elif week_number == 2:
+        start_day, end_day = 8, 14
+    elif week_number == 3:
+        start_day, end_day = 15, 21
+    elif week_number == 4:
+        start_day, end_day = 22, 28
+    else:
+        start_day = 29
+        end_day = calendar.monthrange(date.year, date.month)[1]
+
+    return (
+        f"{month_name} Week {week_number} "
+        f"({start_day}-{end_day}), {date.year}"
+    )
+
+
 def get_week_display(date):
     """
     Display weekly period as:
@@ -1932,32 +1978,17 @@ def generate_aggregated_data_long(
             .dt.strftime("%G-W%V")
         )
 
-        period_source = df.copy()
+            first_work["PeriodKey"] = first_work["Date"].apply(get_month_week_key)
+            coll_work["PeriodKey"] = coll_work["Date"].apply(get_month_week_key)
 
-        period_source["PeriodKey"] = (
-            period_source["Date"]
-            .dt.strftime("%G-W%V")
-        )
+            display_lookup = {}
+            period_source = df.copy()
+            period_source["PeriodKey"] = period_source["Date"].apply(get_month_week_key)
 
-        display_lookup = {}
-
-        for period_key, group in (
-            period_source
-            .groupby("PeriodKey")
-        ):
-
-            # Get the first date in this ISO week
-            first_date = group[
-                "Date"
-            ].min()
-            
-            # Use the actual date to determine the week number
-            # Week is based on day of month (1-7=Week1, 8-14=Week2, etc.)
-            display_lookup[
-                period_key
-            ] = get_week_display(
-                first_date
-            )
+            for period_key, group in period_source.groupby("PeriodKey"):
+                display_lookup[period_key] = get_month_week_display(
+                    group["Date"].min()
+                )
 
     elif aggregation_type == "month":
 
