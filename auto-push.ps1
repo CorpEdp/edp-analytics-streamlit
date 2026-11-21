@@ -171,11 +171,13 @@ while ($true) {
     $remoteOnly = [int]$commitCounts[1]
 
     if ($remoteOnly -gt 0 -and $localOnly -eq 0) {
-        git merge --ff-only "origin/$Branch"
-        if ($LASTEXITCODE -eq 0) {
+        $mergeResult = Invoke-Git @("merge", "--ff-only", "origin/$Branch")
+        if ($mergeResult.ExitCode -eq 0) {
+            $mergeResult.Output | ForEach-Object { Write-Log "$_" }
             Write-Log "Fast-forwarded local $Branch from origin/$Branch."
         }
         else {
+            $mergeResult.Output | ForEach-Object { Write-Log "  $_" }
             Write-Log "ERROR: Could not fast-forward local $Branch; manual sync is required."
             Start-Sleep -Seconds $RetryInterval
         }
@@ -189,11 +191,10 @@ while ($true) {
     }
 
     if ($localOnly -gt 0) {
-        $pushOutput = git push origin $Branch 2>&1
-        $pushExitCode = $LASTEXITCODE
-        $pushOutput | ForEach-Object { Write-Log "$_" }
+        $pushResult = Invoke-Git @("push", "origin", $Branch)
+        $pushResult.Output | ForEach-Object { Write-Log "$_" }
 
-        if ($pushExitCode -eq 0) {
+        if ($pushResult.ExitCode -eq 0) {
             Write-Log "SUCCESS: Pushed local commits to GitHub. Streamlit Cloud can now deploy the update."
         }
         else {
