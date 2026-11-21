@@ -674,7 +674,7 @@ class ReportGenerator:
             transaction_lookup[key].append({
                 'saved_amount': row['Saved Amount Clean'] if 'Saved Amount Clean' in row else np.nan,
                 'scheme_name': row.get('Scheme Name', '') if 'Scheme Name' in row else '',
-                'passbook_no': row.get('Passbook number', '') if 'Passbook number' in row else '',
+                'passbook_no': self.clean_passbook_number(row.get('Passbook number', '')) if 'Passbook number' in row else '',
                 'paid_date': row.get('Date Clean', ''),
                 'customer_phone': row['Clean Phone'],
                 'index': idx
@@ -703,10 +703,10 @@ class ReportGenerator:
                         for trans in unused_transactions:
                             if pd.notna(trans['saved_amount']) and abs(trans['saved_amount'] - enrollment_amount) <= 0.01:
                                 used_transaction_indices.add(trans['index'])
-                                return trans['saved_amount'], trans['scheme_name'], str(trans['passbook_no']).strip()
+                                return trans['saved_amount'], trans['scheme_name'], self.clean_passbook_number(trans['passbook_no'])
                     trans = unused_transactions[0]
                     used_transaction_indices.add(trans['index'])
-                    return trans['saved_amount'], trans['scheme_name'], str(trans['passbook_no']).strip()
+                    return trans['saved_amount'], trans['scheme_name'], self.clean_passbook_number(trans['passbook_no'])
             return np.nan, "", ""
 
         transaction_details = final_report.apply(get_transaction_details, axis=1, result_type='expand')
