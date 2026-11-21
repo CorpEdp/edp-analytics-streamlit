@@ -192,6 +192,14 @@ class ReportGenerator:
             phone_digits = phone_digits[1:]
         return phone_digits
 
+    def clean_passbook_number(self, passbook):
+        if pd.isna(passbook):
+            return ""
+        value = str(passbook).strip()
+        if re.fullmatch(r'\d+\.0', value):
+            value = value[:-2]
+        return value
+
     def clean_currency_amount(self, amount):
         if pd.isna(amount):
             return np.nan
@@ -295,7 +303,7 @@ class ReportGenerator:
         report_copy['Duplicate Group'] = ''
 
         report_copy['Scheme Passbook Number'] = report_copy['Scheme Passbook Number'].apply(
-            lambda value: str(value).strip() if pd.notna(value) else ''
+            self.clean_passbook_number
         )
         has_passbook = report_copy['Scheme Passbook Number'] != ''
 
