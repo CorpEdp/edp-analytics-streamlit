@@ -105,7 +105,7 @@ while ($true) {
     }
 
     # Fetch and push independently of worktree changes so a failed push is retried.
-    git fetch origin $Branch
+    git fetch origin
     if ($LASTEXITCODE -ne 0) {
         Write-Log "ERROR: git fetch failed; will retry."
         Start-Sleep -Seconds $RetryInterval
