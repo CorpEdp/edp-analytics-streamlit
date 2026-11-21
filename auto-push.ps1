@@ -10,6 +10,19 @@ $Branch = "main"
 
 # How often to check for changes (seconds)
 $CheckInterval = 5
+$RetryInterval = 30
+$LogDirectory = Join-Path $env:LOCALAPPDATA "EDP Analytics"
+$LogPath = Join-Path $LogDirectory "auto-push.log"
+
+New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null
+
+function Write-Log {
+    param([string]$Message)
+
+    $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"
+    Write-Host $line
+    Add-Content -Path $LogPath -Value $line
+}
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
@@ -28,10 +41,7 @@ Set-Location $RepoPath
 
 # Verify this is a Git repository
 if (-not (Test-Path ".git")) {
-    Write-Host "ERROR: This folder is not a Git repository." -ForegroundColor Red
-    Write-Host ""
-    Write-Host "Run this first:"
-    Write-Host "git clone https://github.com/CorpEdp/edp-analytics-streamlit.git"
+    Write-Log "ERROR: $RepoPath is not a Git repository."
     exit 1
 }
 
@@ -43,85 +53,111 @@ if ($currentBranch -ne $Branch) {
     git checkout $Branch
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: Could not switch to $Branch." -ForegroundColor Red
+        Write-Log "ERROR: Could not switch to $Branch."
         exit 1
     }
 }
 
-Write-Host "Watcher started successfully." -ForegroundColor Green
-Write-Host ""
+Write-Log "Watcher started. Repository: $RepoPath; branch: $Branch."
 
 while ($true) {
-
-    # Check Git status
-    $status = git status --porcelain
+    $status = git status --porcelain --untracked-files=normal
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "ERROR: git status failed; will retry."
+        Start-Sleep -Seconds $RetryInterval
+        continue
+    }
 
     if ($status) {
-
-        Write-Host ""
-        Write-Host "--------------------------------------------" -ForegroundColor DarkGray
-        Write-Host "Change detected!" -ForegroundColor Yellow
-        Write-Host (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-        Write-Host "--------------------------------------------" -ForegroundColor DarkGray
-
-        # Show changed files
-        Write-Host ""
-        Write-Host "Changed files:" -ForegroundColor Cyan
-        git status --short
+        Write-Log "Change detected:"
+        git status --short | ForEach-Object { Write-Log $_ }
 
         # Wait briefly so multiple files saved together
-        Write-Host ""
-        Write-Host "Waiting for file saves to finish..." -ForegroundColor Yellow
         Start-Sleep -Seconds 2
 
-        # Check again
-        $statusAfterWait = git status --porcelain
+        $statusAfterWait = git status --porcelain --untracked-files=normal
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "ERROR: Could not recheck Git status; will retry."
+            Start-Sleep -Seconds $RetryInterval
+            continue
+        }
 
         if ($statusAfterWait) {
-
-            # Add all changes
-            Write-Host ""
-            Write-Host "Adding changes..." -ForegroundColor Cyan
-            git add .
+            git add -A
 
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "ERROR: git add failed." -ForegroundColor Red
-                Start-Sleep -Seconds $CheckInterval
+                Write-Log "ERROR: git add failed; will retry."
+                Start-Sleep -Seconds $RetryInterval
                 continue
             }
 
-            # Create commit message
             $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
             $commitMessage = "Auto update EDP Analytics - $timestamp"
-
-            Write-Host "Creating commit..." -ForegroundColor Cyan
             git commit -m "$commitMessage"
 
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "ERROR: git commit failed." -ForegroundColor Red
-                Start-Sleep -Seconds $CheckInterval
-                continue
-            }
-
-            # Push to GitHub
-            Write-Host ""
-            Write-Host "Pushing to GitHub..." -ForegroundColor Cyan
-
-            git push origin $Branch
-
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host ""
-                Write-Host "SUCCESS!" -ForegroundColor Green
-                Write-Host "Changes pushed to GitHub." -ForegroundColor Green
-                Write-Host "Streamlit can now deploy the update." -ForegroundColor Green
+                Write-Log "ERROR: git commit failed; staged changes will be retried."
             }
             else {
-                Write-Host ""
-                Write-Host "ERROR: GitHub push failed." -ForegroundColor Red
-                Write-Host "Check your GitHub authentication and permissions." -ForegroundColor Red
+                Write-Log "Committed local changes."
             }
+        }
+    }
 
-            Write-Host ""
+    # Fetch and push independently of worktree changes so a failed push is retried.
+    git fetch origin $Branch
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "ERROR: git fetch failed; will retry."
+        Start-Sleep -Seconds $RetryInterval
+        continue
+    }
+
+    $divergence = git rev-list --left-right --count "HEAD...origin/$Branch"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "ERROR: Could not compare local and remote commits; will retry."
+        Start-Sleep -Seconds $RetryInterval
+        continue
+    }
+
+    $commitCounts = "$divergence" -split '\s+'
+    if ($commitCounts.Count -ne 2) {
+        Write-Log "ERROR: Unexpected output while comparing local and remote commits: $divergence"
+        Start-Sleep -Seconds $RetryInterval
+        continue
+    }
+
+    $localOnly = [int]$commitCounts[0]
+    $remoteOnly = [int]$commitCounts[1]
+
+    if ($remoteOnly -gt 0 -and $localOnly -eq 0) {
+        git merge --ff-only "origin/$Branch"
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log "Fast-forwarded local $Branch from origin/$Branch."
+        }
+        else {
+            Write-Log "ERROR: Could not fast-forward local $Branch; manual sync is required."
+            Start-Sleep -Seconds $RetryInterval
+        }
+        continue
+    }
+
+    if ($remoteOnly -gt 0 -and $localOnly -gt 0) {
+        Write-Log "ERROR: Local and GitHub $Branch have diverged; manual sync is required."
+        Start-Sleep -Seconds $RetryInterval
+        continue
+    }
+
+    if ($localOnly -gt 0) {
+        $pushOutput = git push origin $Branch 2>&1
+        $pushExitCode = $LASTEXITCODE
+        $pushOutput | ForEach-Object { Write-Log "$_" }
+
+        if ($pushExitCode -eq 0) {
+            Write-Log "SUCCESS: Pushed local commits to GitHub. Streamlit Cloud can now deploy the update."
+        }
+        else {
+            Write-Log "ERROR: git push failed; pending commits will be retried."
+            Start-Sleep -Seconds $RetryInterval
         }
     }
 
