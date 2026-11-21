@@ -192,6 +192,14 @@ class ReportGenerator:
             phone_digits = phone_digits[1:]
         return phone_digits
 
+    def clean_passbook_number(self, passbook):
+        if pd.isna(passbook):
+            return ""
+        value = str(passbook).strip()
+        if re.fullmatch(r'\d+\.0', value):
+            value = value[:-2]
+        return value
+
     def clean_currency_amount(self, amount):
         if pd.isna(amount):
             return np.nan
@@ -295,7 +303,7 @@ class ReportGenerator:
         report_copy['Duplicate Group'] = ''
 
         report_copy['Scheme Passbook Number'] = report_copy['Scheme Passbook Number'].apply(
-            lambda value: str(value).strip() if pd.notna(value) else ''
+            self.clean_passbook_number
         )
         has_passbook = report_copy['Scheme Passbook Number'] != ''
 
@@ -304,7 +312,7 @@ class ReportGenerator:
             return report_copy, pd.DataFrame(), set(), report_copy
 
         report_copy['Duplicate Key'] = (
-            report_copy['Scheme Passbook Number'].astype(str) + '_' +
+            report_copy['Scheme Passbook Number'].astype(str).str.upper() + '_' +
             report_copy['Employee Name'].astype(str) + '_' +
             report_copy['Employee Code'].astype(str) + '_' +
             report_copy['Branch'].astype(str)
@@ -342,6 +350,7 @@ class ReportGenerator:
                     duplicate_details_list.append({
                         'Group ID': f'GROUP_{group_counter}',
                         'Scheme Passbook Number': original_row['Scheme Passbook Number'],
+                        'Duplicate Scheme Passbook Number': duplicate_row['Scheme Passbook Number'],
                         'Original Employee Name': original_row['Employee Name'],
                         'Original Employee Code': original_row['Employee Code'],
                         'Original Customer Name': original_row['Customer Name'],
@@ -453,13 +462,15 @@ class ReportGenerator:
             date = row['Clean Date']
             amount = row['Online Amount']
             if phone and phone != "":
-                key = phone
-                if date:
-                    key = f"{phone}_{date}"
-                bss_lookup[key].append({
+                bss_lookup[phone].append({
                     'amount': amount, 'scheme_name': row.get('Scheme', ''),
                     'doc_no': row.get('Doc No', ''), 'date': date, 'index': idx
                 })
+                if date:
+                    bss_lookup[f"{phone}_{date}"].append({
+                        'amount': amount, 'scheme_name': row.get('Scheme', ''),
+                        'doc_no': row.get('Doc No', ''), 'date': date, 'index': idx
+                    })
         used_bss_indices = set()
 
         def find_unused_match(candidates, enrollment_amount):
@@ -476,7 +487,7 @@ class ReportGenerator:
             used_bss_indices.add(match['index'])
             final_report.loc[idx, 'Customer Payment'] = match['amount']
             final_report.loc[idx, 'Scheme Name'] = match['scheme_name']
-            final_report.loc[idx, 'Scheme Passbook Number'] = str(match['doc_no']).strip()
+            final_report.loc[idx, 'Scheme Passbook Number'] = self.clean_passbook_number(match['doc_no'])
             final_report.loc[idx, 'True/False'] = True
             final_report.loc[idx, 'Not Enrolled'] = False
 
@@ -694,10 +705,10 @@ class ReportGenerator:
                         for trans in unused_transactions:
                             if pd.notna(trans['saved_amount']) and abs(trans['saved_amount'] - enrollment_amount) <= 0.01:
                                 used_transaction_indices.add(trans['index'])
-                                return trans['saved_amount'], trans['scheme_name'], str(trans['passbook_no']).strip()
+                                return trans['saved_amount'], trans['scheme_name'], self.clean_passbook_number(trans['passbook_no'])
                     trans = unused_transactions[0]
                     used_transaction_indices.add(trans['index'])
-                    return trans['saved_amount'], trans['scheme_name'], str(trans['passbook_no']).strip()
+                    return trans['saved_amount'], trans['scheme_name'], self.clean_passbook_number(trans['passbook_no'])
             return np.nan, "", ""
 
         transaction_details = final_report.apply(get_transaction_details, axis=1, result_type='expand')
