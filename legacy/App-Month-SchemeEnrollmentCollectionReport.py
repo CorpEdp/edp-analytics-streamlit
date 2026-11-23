@@ -184,14 +184,6 @@ def get_scheme_list(df, scheme_type="all"):
 # WEEK FUNCTIONS
 # ============================================================
 
-def get_week_number(date):
-    """
-    Get ISO week number.
-    """
-
-    return date.isocalendar().week
-
-
 def get_month_week_number(date):
     """Return the fixed month-week number for a date."""
 
@@ -215,64 +207,10 @@ def get_month_week_key(date):
 
 
 def get_month_week_display(date):
-    """Return a user-friendly fixed month-week period with date range."""
+    """Return the fixed month-week label used in reports."""
 
     week_number = get_month_week_number(date)
-    month_name = date.strftime("%b")
-
-    if week_number == 1:
-        start_day, end_day = 1, 7
-    elif week_number == 2:
-        start_day, end_day = 8, 14
-    elif week_number == 3:
-        start_day, end_day = 15, 21
-    elif week_number == 4:
-        start_day, end_day = 22, 28
-    else:
-        start_day = 29
-        end_day = calendar.monthrange(date.year, date.month)[1]
-
-    return (
-        f"{month_name} Week {week_number} "
-        f"({start_day}-{end_day}), {date.year}"
-    )
-
-
-def get_week_display(date):
-    """
-    Display weekly period as:
-        Nov Week 2, 2025
-    
-    Simple week numbering based on day of month:
-        Days 1-7 = Week 1
-        Days 8-14 = Week 2
-        Days 15-21 = Week 3
-        Days 22-28 = Week 4
-        Days 29+ = Week 5
-    """
-    
-    # Simple week calculation based on day of month
-    day = date.day
-    
-    if day <= 7:
-        week_of_month = 1
-    elif day <= 14:
-        week_of_month = 2
-    elif day <= 21:
-        week_of_month = 3
-    elif day <= 28:
-        week_of_month = 4
-    else:
-        week_of_month = 5
-    
-    month_name = date.strftime("%b")
-
-    return (
-        f"{month_name} Week "
-        f"{week_of_month}, "
-        f"{date.year}"
-    )
-
+    return f"{date.strftime('%b')} Week {week_number}, {date.year}"
 
 # ============================================================
 # CHANGE CALCULATION
@@ -1838,7 +1776,6 @@ def display_avg_ticket_comparison(
 
     st.dataframe(
         styled_df,
-        use_container_width=True,
         hide_index=True
     )
 
@@ -1965,30 +1902,17 @@ def generate_aggregated_data_long(
     # ========================================================
 
     if aggregation_type == "week":
+        first_work["PeriodKey"] = first_work["Date"].apply(get_month_week_key)
+        coll_work["PeriodKey"] = coll_work["Date"].apply(get_month_week_key)
 
-        # Internal key remains YYYY-W##
-        # so chronological comparison stays correct.
-        first_work["PeriodKey"] = (
-            first_work["Date"]
-            .dt.strftime("%G-W%V")
-        )
+        display_lookup = {}
+        period_source = df.copy()
+        period_source["PeriodKey"] = period_source["Date"].apply(get_month_week_key)
 
-        coll_work["PeriodKey"] = (
-            coll_work["Date"]
-            .dt.strftime("%G-W%V")
-        )
-
-            first_work["PeriodKey"] = first_work["Date"].apply(get_month_week_key)
-            coll_work["PeriodKey"] = coll_work["Date"].apply(get_month_week_key)
-
-            display_lookup = {}
-            period_source = df.copy()
-            period_source["PeriodKey"] = period_source["Date"].apply(get_month_week_key)
-
-            for period_key, group in period_source.groupby("PeriodKey"):
-                display_lookup[period_key] = get_month_week_display(
-                    group["Date"].min()
-                )
+        for period_key, group in period_source.groupby("PeriodKey"):
+            display_lookup[period_key] = get_month_week_display(
+                group["Date"].min()
+            )
 
     elif aggregation_type == "month":
 
@@ -2042,11 +1966,21 @@ def generate_aggregated_data_long(
             )
         }
 
-    periods = sorted(
-        set(first_work["PeriodKey"].dropna())
-        |
-        set(coll_work["PeriodKey"].dropna())
-    )
+    if aggregation_type == "week":
+        # Only report periods that contain enrollment or collection data.
+        # This prevents empty or skipped Week 5 periods from becoming
+        # artificial previous-period values in change calculations.
+        periods = sorted(
+            set(first_work["PeriodKey"].dropna())
+            |
+            set(coll_work["PeriodKey"].dropna())
+        )
+    else:
+        periods = sorted(
+            set(first_work["PeriodKey"].dropna())
+            |
+            set(coll_work["PeriodKey"].dropna())
+        )
 
     # ========================================================
     # PREVIOUS VALUES
@@ -2701,7 +2635,6 @@ def display_aggregated_with_comparison(
 
     st.dataframe(
         styled_df,
-        use_container_width=True,
         hide_index=True
     )
 
@@ -3058,6 +2991,67 @@ st.header(
     "📋 Formatted Report Preview"
 )
 
+weekly_download_parts = []
+
+if 'daily_week' in locals() and not daily_week.empty:
+    daily_week_download = daily_week.copy()
+    daily_week_download.insert(
+        0,
+        "Scheme Category",
+        "Daily (e-Gold / e-Silver)"
+    )
+    weekly_download_parts.append(daily_week_download)
+
+if 'sessional_week' in locals() and not sessional_week.empty:
+    sessional_week_download = sessional_week.copy()
+    sessional_week_download.insert(
+        0,
+        "Scheme Category",
+        "Sessional"
+    )
+    weekly_download_parts.append(sessional_week_download)
+
+if weekly_download_parts:
+    weekly_download_df = pd.concat(
+        weekly_download_parts,
+        ignore_index=True
+    )
+
+    for change_column in [
+        column
+        for column in weekly_download_df.columns
+        if "Change %" in column
+    ]:
+        weekly_download_df[change_column] = (
+            weekly_download_df[change_column].apply(
+                lambda value:
+                "New"
+                if value == float("inf")
+                else
+                (
+                    f"+{value:.2f}%"
+                    if isinstance(value, (int, float))
+                    and not pd.isna(value)
+                    and value > 0
+                    else
+                    (
+                        f"{value:.2f}%"
+                        if isinstance(value, (int, float))
+                        and not pd.isna(value)
+                        else "-"
+                    )
+                )
+            )
+        )
+
+    st.download_button(
+        label="⬇️ Download Weekly Report (CSV)",
+        data=weekly_download_df.to_csv(
+            index=False
+        ).encode("utf-8-sig"),
+        file_name="weekly_enrollment_collection.csv",
+        mime="text/csv"
+    )
 
 with st.expander(
     "ℹ️ How to read this report",
@@ -3077,13 +3071,17 @@ with st.expander(
 - Represents additional/follow-up payments.
 
 ### Weekly Period
-Weekly periods are displayed as:
+Each month has its own fixed weekly periods:
+
+- **Week 1:** 1st to 7th
+- **Week 2:** 8th to 14th
+- **Week 3:** 15th to 21st
+- **Week 4:** 22nd to 28th
+- **Week 5:** 29th to 30th or 31st, depending on the month
+
+Example display:
 
 **Nov Week 2, 2025**
-
-instead of:
-
-**Week 45, 2025**
 
 ### Change %
 - **Enrollment Count Change %** = change in enrollment transaction count.
@@ -3108,7 +3106,6 @@ if daily_schemes:
 
     st.dataframe(
         daily_summary,
-        use_container_width=True,
         hide_index=True
     )
 
@@ -3155,7 +3152,6 @@ if sessional_schemes:
 
     st.dataframe(
         sessional_summary,
-        use_container_width=True,
         hide_index=True
     )
 
@@ -3391,7 +3387,5 @@ st.download_button(
     mime=(
         "application/vnd.openxmlformats-"
         "officedocument.spreadsheetml.sheet"
-    ),
-
-    use_container_width=True
+    )
 )
